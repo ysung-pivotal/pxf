@@ -11,6 +11,7 @@ HADOOP_HOSTNAME="ccp-$(cat terraform_dataproc/name)-m"
 scale=$(($SCALE + 0))
 PXF_CONF_DIR="/home/gpadmin/pxf"
 PXF_SERVER_DIR="${PXF_CONF_DIR}/servers"
+UUID=$(cat /proc/sys/kernel/random/uuid)
 
 if [ ${scale} -gt 10 ]; then
   VALIDATION_QUERY="SUM(l_partkey) AS PARTKEYSUM"
@@ -255,14 +256,14 @@ function create_adl_external_tables() {
     psql -c "CREATE EXTERNAL TABLE lineitem_adl_read (LIKE lineitem)
         LOCATION('pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/lineitem/${SCALE}/?PROFILE=adl:text&server=adlbenchmark') FORMAT 'CSV' (DELIMITER '|');"
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_adl_write (LIKE lineitem)
-        LOCATION('pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/output/${SCALE}/?PROFILE=adl:text&server=adlbenchmark') FORMAT 'CSV'"
+        LOCATION('pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/output/${SCALE}/${UUID}/?PROFILE=adl:text&server=adlbenchmark') FORMAT 'CSV'"
 }
 
 function create_gcs_external_tables() {
     psql -c "CREATE EXTERNAL TABLE lineitem_gcs_read (LIKE lineitem)
         LOCATION('pxf://data-gpdb-ud-tpch/${SCALE}/lineitem_data/?PROFILE=gs:text&SERVER=gsbenchmark') FORMAT 'CSV' (DELIMITER '|');"
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_gcs_write (LIKE lineitem)
-        LOCATION('pxf://data-gpdb-ud-tpch/output/${SCALE}/?PROFILE=gs:text&SERVER=gsbenchmark') FORMAT 'CSV';"
+        LOCATION('pxf://data-gpdb-ud-pxf-benchmark/output/${SCALE}/${UUID}/?PROFILE=gs:text&SERVER=gsbenchmark') FORMAT 'CSV';"
 }
 
 function create_s3_extension_external_tables {
@@ -271,14 +272,14 @@ function create_s3_extension_external_tables {
     psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf (LIKE lineitem)
         LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark') FORMAT 'CSV' (DELIMITER '|');"
     psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-scratch/s3-profile-parquet-test/output/${SCALE}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import');"
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import');"
 
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_c_write (like lineitem)
-        LOCATION('s3://s3.us-west-2.amazonaws.com/gpdb-ud-scratch/s3-profile-test/output/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV'"
+        LOCATION('s3://s3.us-west-2.amazonaws.com/gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV'"
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/output/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark') FORMAT 'CSV'"
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/?PROFILE=s3:text&SERVER=s3benchmark') FORMAT 'CSV'"
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_parquet (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-scratch/s3-profile-parquet-test/output/${SCALE}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
 
 }
 
@@ -286,7 +287,7 @@ function create_wasb_external_tables() {
     psql -c "CREATE EXTERNAL TABLE lineitem_wasb_read (LIKE lineitem)
         LOCATION('pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/lineitem/${SCALE}/?PROFILE=wasbs:text&server=wasbbenchmark') FORMAT 'CSV' (DELIMITER '|');"
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_wasb_write (LIKE lineitem)
-        LOCATION('pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/output/${SCALE}/?PROFILE=wasbs:text&server=wasbbenchmark') FORMAT 'CSV'"
+        LOCATION('pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/output/${SCALE}/${UUID}/?PROFILE=wasbs:text&server=wasbbenchmark') FORMAT 'CSV'"
 }
 
 function assert_count_in_table {
@@ -536,6 +537,10 @@ function main {
     install_gpdb_binary
 
     install_pxf_server
+
+    echo "Running ${SCALE}G test with UUID ${UUID}"
+    echo "PXF Process Details:"
+    echo "$(ps aux | grep tomcat)"
 
     source ${GPHOME}/greenplum_path.sh
     create_database_and_schema

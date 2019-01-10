@@ -202,26 +202,6 @@ jobs:
   - get: gpdb-pxf-dev-centos6-hdp-server
 
   - aggregate:
-    - task: clean_up_s3
-      config:
-        platform: linux
-        image_resource:
-          type: docker-image
-          source:
-            repository: toolsmiths/ccp
-            tag: "7"
-        run:
-          path: aws
-          args:
-          - s3
-          - rm
-          - s3://gpdb-ud-scratch/s3-profile-test/output/
-          - --recursive
-        params:
-          AWS_ACCESS_KEY_ID: {{tf-machine-access-key-id}}
-          AWS_SECRET_ACCESS_KEY: {{tf-machine-secret-access-key}}
-          AWS_DEFAULT_REGION: {{tf-machine-region}}
-
     - put: terraform_gpdb
       resource: terraform
       params:
