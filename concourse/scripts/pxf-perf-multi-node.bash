@@ -523,9 +523,9 @@ EOF
     cat << EOF
 
 
-############################
-#  S3 PXF READ BENCHMARK   #
-############################
+####################################
+#  S3 PXF READ PARQUET BENCHMARK   #
+####################################
 EOF
     assert_count_in_table "lineitem_s3_pxf_parquet" "${LINEITEM_COUNT}"
 
