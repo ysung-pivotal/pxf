@@ -269,12 +269,17 @@ function create_s3_extension_external_tables {
     psql -c "CREATE EXTERNAL TABLE lineitem_s3_c (LIKE lineitem)
         LOCATION('s3://s3.us-west-2.amazonaws.com/gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV' (DELIMITER '|')"
     psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark') format 'CSV' (DELIMITER '|');"
+        LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark') FORMAT 'CSV' (DELIMITER '|');"
+    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-scratch/s3-profile-parquet-test/output/${SCALE}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import');"
 
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_c_write (like lineitem)
         LOCATION('s3://s3.us-west-2.amazonaws.com/gpdb-ud-scratch/s3-profile-test/output/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV'"
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write (LIKE lineitem)
         LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/output/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark') FORMAT 'CSV'"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_parquet (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-scratch/s3-profile-parquet-test/output/${SCALE}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
+
 }
 
 function create_wasb_external_tables() {
@@ -504,6 +509,25 @@ EOF
 ############################
 EOF
     time psql -c "INSERT INTO lineitem_s3_pxf_write SELECT * FROM lineitem"
+
+    cat << EOF
+
+
+####################################
+#  S3 PXF WRITE PARQUET BENCHMARK  #
+####################################
+EOF
+    time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet SELECT * FROM lineitem"
+
+    cat << EOF
+
+
+############################
+#  S3 PXF READ BENCHMARK   #
+############################
+EOF
+    assert_count_in_table "lineitem_s3_pxf_parquet" "${LINEITEM_COUNT}"
+
 }
 
 function main {
