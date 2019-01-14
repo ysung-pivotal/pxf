@@ -36,6 +36,10 @@ function run_pxf_smoke_secure() {
 		exit 1
 	fi
 
+	pushd \${1}/pxf_src/automation
+	make GROUP=hcfs
+	popd
+
 	exit 0
 	EOF
 
