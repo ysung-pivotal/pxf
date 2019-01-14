@@ -301,6 +301,8 @@ jobs:
       SCALE: {{perf-scale}}
       BENCHMARK_ADL: {{perf-benchmark-adl}}
       BENCHMARK_S3: {{perf-benchmark-s3}}
+      BENCHMARK_S3_CONCURRENCY: {{perf-benchmark-s3-concurrency}}
+      BENCHMARK_S3_EXTENSION: {{perf-benchmark-s3-extension}}
       BENCHMARK_GCS: {{perf-benchmark-gcs}}
       BENCHMARK_GPHDFS: {{perf-benchmark-gphdfs}}
       BENCHMARK_WASB: {{perf-benchmark-wasb}}

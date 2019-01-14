@@ -25,28 +25,28 @@ source "${CWDIR}/pxf_common.bash"
 
 function create_database_and_schema {
     # Create DB
-    psql -d postgres <<-EOF
-    DROP DATABASE IF EXISTS tpch;
-    CREATE DATABASE tpch;
-    \c tpch;
-    CREATE TABLE lineitem (
-        l_orderkey    BIGINT NOT NULL,
-        l_partkey     BIGINT NOT NULL,
-        l_suppkey     BIGINT NOT NULL,
-        l_linenumber  BIGINT NOT NULL,
-        l_quantity    DECIMAL(15,2) NOT NULL,
-        l_extendedprice  DECIMAL(15,2) NOT NULL,
-        l_discount    DECIMAL(15,2) NOT NULL,
-        l_tax         DECIMAL(15,2) NOT NULL,
-        l_returnflag  CHAR(1) NOT NULL,
-        l_linestatus  CHAR(1) NOT NULL,
-        l_shipdate    DATE NOT NULL,
-        l_commitdate  DATE NOT NULL,
-        l_receiptdate DATE NOT NULL,
-        l_shipinstruct CHAR(25) NOT NULL,
-        l_shipmode     CHAR(10) NOT NULL,
-        l_comment VARCHAR(44) NOT NULL
-    ) DISTRIBUTED BY (l_partkey);
+    psql -d postgres <<EOF
+DROP DATABASE IF EXISTS tpch;
+CREATE DATABASE tpch;
+\c tpch;
+CREATE TABLE lineitem (
+    l_orderkey    BIGINT NOT NULL,
+    l_partkey     BIGINT NOT NULL,
+    l_suppkey     BIGINT NOT NULL,
+    l_linenumber  BIGINT NOT NULL,
+    l_quantity    DECIMAL(15,2) NOT NULL,
+    l_extendedprice  DECIMAL(15,2) NOT NULL,
+    l_discount    DECIMAL(15,2) NOT NULL,
+    l_tax         DECIMAL(15,2) NOT NULL,
+    l_returnflag  CHAR(1) NOT NULL,
+    l_linestatus  CHAR(1) NOT NULL,
+    l_shipdate    DATE NOT NULL,
+    l_commitdate  DATE NOT NULL,
+    l_receiptdate DATE NOT NULL,
+    l_shipinstruct CHAR(25) NOT NULL,
+    l_shipmode     CHAR(10) NOT NULL,
+    l_comment VARCHAR(44) NOT NULL
+) DISTRIBUTED BY (l_partkey);
 EOF
 
     # Prevent GPDB from erroring out with VMEM protection error
@@ -56,7 +56,7 @@ EOF
     sleep 10
 
     psql -c "CREATE EXTERNAL TABLE lineitem_external (like lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
-    if [ "${BENCHMARK_S3}" == "true" ]; then
+    if [[ "${BENCHMARK_S3_EXTENSION}" == "true" ]]; then
         psql -c "CREATE OR REPLACE FUNCTION write_to_s3() RETURNS integer AS '\$libdir/gps3ext.so', 's3_export' LANGUAGE C STABLE"
         psql -c "CREATE OR REPLACE FUNCTION read_from_s3() RETURNS integer AS '\$libdir/gps3ext.so', 's3_import' LANGUAGE C STABLE"
         psql -c "CREATE PROTOCOL s3 (writefunc = write_to_s3, readfunc = read_from_s3)"
@@ -98,12 +98,22 @@ function setup_sshd {
     service sshd start
     passwd -u root
 
-    if [ -d cluster_env_files ]; then
+    if [[ -d cluster_env_files ]]; then
         /bin/cp -Rf cluster_env_files/.ssh/* /root/.ssh
         /bin/cp -f cluster_env_files/private_key.pem /root/.ssh/id_rsa
         /bin/cp -f cluster_env_files/public_key.pem /root/.ssh/id_rsa.pub
         /bin/cp -f cluster_env_files/public_key.openssh /root/.ssh/authorized_keys
     fi
+}
+
+function write_header {
+    cat << EOF
+
+
+############################################
+# ${1}
+############################################
+EOF
 }
 
 function write_data {
@@ -138,7 +148,7 @@ Results from external query
 EOF
     echo ${external_values}
 
-    if [ "${external_values}" != "${gpdb_values}" ]; then
+    if [[ "${external_values}" != "${gpdb_values}" ]]; then
         echo ERROR! Unable to validate data written from external to GPDB
         exit 1
     fi
@@ -197,22 +207,10 @@ EOF
 function run_pxf_benchmark {
     create_pxf_external_tables
 
-    cat << EOF
-
-
-############################
-#    PXF READ BENCHMARK    #
-############################
-EOF
+    write_header "PXF READ BENCHMARK"
     time psql -c "SELECT COUNT(*) FROM pxf_lineitem_read"
 
-    cat << EOF
-
-
-############################
-#   PXF WRITE BENCHMARK    #
-############################
-EOF
+    write_header "PXF WRITE BENCHMARK"
     time write_data "lineitem" "pxf_lineitem_write"
     cat << EOF
 Validating data
@@ -224,22 +222,10 @@ EOF
 function run_gphdfs_benchmark {
     create_gphdfs_external_tables
 
-    cat << EOF
-
-
-############################
-#  GPHDFS READ BENCHMARK   #
-############################
-EOF
+    write_header "GPHDFS READ BENCHMARK"
     time psql -c "SELECT COUNT(*) FROM gphdfs_lineitem_read"
 
-    cat << EOF
-
-
-############################
-#  GPHDFS WRITE BENCHMARK  #
-############################
-EOF
+    write_header "GPHDFS WRITE BENCHMARK"
     time write_data "lineitem" "gphdfs_lineitem_write"
     cat << EOF
 Validating data
@@ -269,18 +255,28 @@ function create_gcs_external_tables() {
 function create_s3_extension_external_tables {
     psql -c "CREATE EXTERNAL TABLE lineitem_s3_c (LIKE lineitem)
         LOCATION('s3://s3.us-west-2.amazonaws.com/gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV' (DELIMITER '|')"
-    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark') FORMAT 'CSV' (DELIMITER '|');"
-    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import') ENCODING 'UTF8';"
-
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_c_write (like lineitem)
         LOCATION('s3://s3.us-east-2.amazonaws.com/gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV'"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/?PROFILE=s3:text&SERVER=s3benchmark') FORMAT 'CSV'"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_parquet (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
+}
 
+function create_s3_pxf_external_tables() {
+    local uuid
+    local runid
+    uuid=${1}
+    runid=${2}
+
+    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_${runid} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark')
+        FORMAT 'CSV' (DELIMITER '|')"
+    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet_${runid} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${uuid}/?PROFILE=s3:parquet&SERVER=s3benchmark')
+        FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import') ENCODING 'UTF8';"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_${runid} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${uuid}/?PROFILE=s3:text&SERVER=s3benchmark')
+        FORMAT 'CSV'"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_parquet_${runid} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${uuid}/?PROFILE=s3:parquet&SERVER=s3benchmark')
+        FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
 }
 
 function create_wasb_external_tables() {
@@ -305,96 +301,37 @@ function assert_count_in_table {
 function run_wasb_benchmark() {
     create_wasb_external_tables
 
-    cat > /tmp/wasb-site.xml <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
-<configuration>
-	<property>
-		<name>dfs.adls.oauth2.access.token.provider.type</name>
-		<value>ClientCredential</value>
-	</property>
-	<property>
-		<name>fs.azure.account.key.${WASB_ACCOUNT_NAME}.blob.core.windows.net</name>
-		<value>${WASB_ACCOUNT_KEY}</value>
-	</property>
-</configuration>
-EOF
-
     WASB_SERVER_DIR="${PXF_SERVER_DIR}/wasbbenchmark"
 
     # Create the WASB Benchmark server and copy core-site.xml
-    gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $WASB_SERVER_DIR"
-    gpscp -u gpadmin -h mdw /tmp/wasb-site.xml =:${WASB_SERVER_DIR}/wasb-site.xml
+    gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $WASB_SERVER_DIR && cp ${PXF_CONF_DIR}/templates/wasbs-site.xml $WASB_SERVER_DIR"
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AZURE_BLOB_STORAGE_ACCOUNT_NAME|${WASB_ACCOUNT_NAME}|\" ${WASB_SERVER_DIR}/wasbs-site.xml"
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AZURE_BLOB_STORAGE_ACCOUNT_KEY|${WASB_ACCOUNT_KEY}|\" ${WASB_SERVER_DIR}/wasbs-site.xml"
     sync_configuration
 
-    cat << EOF
-
-
-#########################################
-# AZURE BLOB STORAGE PXF READ BENCHMARK #
-#########################################
-EOF
+    write_header "AZURE BLOB STORAGE PXF READ BENCHMARK"
     assert_count_in_table "lineitem_wasb_read" "${LINEITEM_COUNT}"
 
-    cat << EOF
-
-
-##########################################
-# AZURE BLOB STORAGE PXF WRITE BENCHMARK #
-##########################################
-EOF
+    write_header "AZURE BLOB STORAGE PXF WRITE BENCHMARK"
     time psql -c "INSERT INTO lineitem_wasb_write SELECT * FROM lineitem"
 }
 
 function run_adl_benchmark() {
     create_adl_external_tables
 
-    cat > /tmp/adl-site.xml <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
-<configuration>
-	<property>
-		<name>dfs.adls.oauth2.access.token.provider.type</name>
-		<value>ClientCredential</value>
-	</property>
-	<property>
-		<name>dfs.adls.oauth2.refresh.url</name>
-		<value>${ADL_REFRESH_URL}</value>
-	</property>
-	<property>
-		<name>dfs.adls.oauth2.client.id</name>
-		<value>${ADL_CLIENT_ID}</value>
-	</property>
-	<property>
-		<name>dfs.adls.oauth2.credential</name>
-		<value>${ADL_CREDENTIAL}</value>
-	</property>
-</configuration>
-EOF
-
     ADL_SERVER_DIR="${PXF_SERVER_DIR}/adlbenchmark"
 
     # Create the ADL Benchmark server and copy core-site.xml
-    gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $ADL_SERVER_DIR"
-    gpscp -u gpadmin -h mdw /tmp/adl-site.xml =:${ADL_SERVER_DIR}/adl-site.xml
+    gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $ADL_SERVER_DIR && cp ${PXF_CONF_DIR}/templates/adl-site.xml $ADL_SERVER_DIR"
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_ADL_REFRESH_URL|${ADL_REFRESH_URL}|\" ${ADL_SERVER_DIR}/adl-site.xml"
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_ADL_CLIENT_ID|${ADL_CLIENT_ID}|\" ${ADL_SERVER_DIR}/adl-site.xml"
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_ADL_CREDENTIAL|${ADL_CREDENTIAL}|\" ${ADL_SERVER_DIR}/adl-site.xml"
     sync_configuration
 
-    cat << EOF
-
-
-############################
-#  ADL PXF READ BENCHMARK  #
-############################
-EOF
+    write_header "ADL PXF READ BENCHMARK"
     assert_count_in_table "lineitem_adl_read" "${LINEITEM_COUNT}"
 
-    cat << EOF
-
-
-############################
-#  ADL PXF WRITE BENCHMARK #
-############################
-EOF
+    write_header "ADL PXF WRITE BENCHMARK"
     time psql -c "INSERT INTO lineitem_adl_write SELECT * FROM lineitem"
 }
 
@@ -407,128 +344,59 @@ EOF
 
     GS_SERVER_DIR="${PXF_SERVER_DIR}/gsbenchmark"
 
-    cat > /tmp/gs-site.xml <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
-<configuration>
-	<property>
-		<name>google.cloud.auth.service.account.enable</name>
-		<value>true</value>
-	</property>
-	<property>
-		<name>google.cloud.auth.service.account.json.keyfile</name>
-		<value>${GS_SERVER_DIR}/gsc-ci-service-account.key.json</value>
-	</property>
-</configuration>
-EOF
-
     # Create the Google Cloud Storage Benchmark server and copy core-site.xml
-    gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $GS_SERVER_DIR"
-    gpscp -u gpadmin -h mdw /tmp/gs-site.xml =:${GS_SERVER_DIR}/
+    gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $GS_SERVER_DIR && cp ${PXF_CONF_DIR}/templates/gs-site.xml $GS_SERVER_DIR"
     gpscp -u gpadmin -h mdw /tmp/gsc-ci-service-account.key.json =:${GS_SERVER_DIR}/
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_GOOGLE_STORAGE_KEYFILE|${GS_SERVER_DIR}/gsc-ci-service-account.key.json|\" ${GS_SERVER_DIR}/gs-site.xml"
     sync_configuration
 
-    cat << EOF
- ###########################################
-# GOOGLE CLOUD STORAGE PXF READ BENCHMARK #
-###########################################
-EOF
+    write_header "GOOGLE CLOUD STORAGE PXF READ BENCHMARK"
     assert_count_in_table "lineitem_gcs_read" "${LINEITEM_COUNT}"
 
-    cat << EOF
- ############################################
-# GOOGLE CLOUD STORAGE PXF WRITE BENCHMARK #
-############################################
-EOF
+    write_header "GOOGLE CLOUD STORAGE PXF WRITE BENCHMARK"
     time psql -c "INSERT INTO lineitem_gcs_write SELECT * FROM lineitem"
+}
+
+function prepare_for_s3_pxf_benchmark() {
+    # We need to create s3-site.xml and provide AWS credentials
+    S3_SERVER_DIR="${PXF_SERVER_DIR}/s3benchmark"
+
+    # Make a backup of core-site and update it with the S3 core-site
+    gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $S3_SERVER_DIR && cp ${PXF_CONF_DIR}/templates/s3-site.xml $S3_SERVER_DIR"
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AWS_ACCESS_KEY_ID|$(AWS_ACCESS_KEY_ID)|\" $S3_SERVER_DIR/s3-site.xml"
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AWS_SECRET_ACCESS_KEY|$(AWS_SECRET_ACCESS_KEY)|\" $S3_SERVER_DIR/s3-site.xml"
+    sync_configuration
+}
+
+function run_s3_pxf_benchmark () {
+    local uuid
+    local runid
+    uuid=${1}
+    runid=${2}
+
+    create_s3_pxf_external_tables ${uuid} ${runid}
+
+    write_header "S3 PXF READ BENCHMARK"
+    assert_count_in_table "lineitem_s3_pxf_${runid}" "${LINEITEM_COUNT}"
+
+    write_header "S3 PXF WRITE BENCHMARK"
+    time psql -c "INSERT INTO lineitem_s3_pxf_write_${runid} SELECT * FROM lineitem"
+
+    write_header "S3 PXF WRITE PARQUET BENCHMARK"
+    time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet_${runid} SELECT * FROM lineitem"
+
+    write_header "S3 PXF READ PARQUET BENCHMARK"
+    assert_count_in_table "lineitem_s3_pxf_parquet_${runid}" "${LINEITEM_COUNT}"
 }
 
 function run_s3_extension_benchmark {
     create_s3_extension_external_tables
 
-    cat << EOF
-
-
-############################
-# S3 C Ext READ BENCHMARK  #
-############################
-EOF
+    write_header "S3 C Ext READ BENCHMARK"
     assert_count_in_table "lineitem_s3_c" "${LINEITEM_COUNT}"
 
-    cat << EOF
-
-
-############################
-# S3 C Ext WRITE BENCHMARK #
-############################
-EOF
+    write_header "S3 C Ext WRITE BENCHMARK"
     time psql -c "INSERT INTO lineitem_s3_c_write SELECT * FROM lineitem"
-
-    # We need to update core-site.xml to point to the the S3 bucket
-    # and we need to provide AWS credentials
-
-    cat > /tmp/s3-site.xml <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
-<configuration>
-	<property>
-		<name>fs.s3a.access.key</name>
-		<value>${AWS_ACCESS_KEY_ID}</value>
-	</property>
-	<property>
-		<name>fs.s3a.secret.key</name>
-		<value>${AWS_SECRET_ACCESS_KEY}</value>
-	</property>
-	<property>
-		<name>fs.s3a.fast.upload</name>
-		<value>true</value>
-	</property>
-</configuration>
-EOF
-
-    S3_SERVER_DIR="${PXF_SERVER_DIR}/s3benchmark"
-
-    # Make a backup of core-site and update it with the S3 core-site
-    gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $S3_SERVER_DIR"
-    gpscp -u gpadmin -h mdw /tmp/s3-site.xml =:${S3_SERVER_DIR}/s3-site.xml
-    sync_configuration
-
-    cat << EOF
-
-
-############################
-#  S3 PXF READ BENCHMARK   #
-############################
-EOF
-    assert_count_in_table "lineitem_s3_pxf" "${LINEITEM_COUNT}"
-
-    cat << EOF
-
-
-############################
-#  S3 PXF WRITE BENCHMARK  #
-############################
-EOF
-    time psql -c "INSERT INTO lineitem_s3_pxf_write SELECT * FROM lineitem"
-
-    cat << EOF
-
-
-####################################
-#  S3 PXF WRITE PARQUET BENCHMARK  #
-####################################
-EOF
-    time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet SELECT * FROM lineitem"
-
-    cat << EOF
-
-
-####################################
-#  S3 PXF READ PARQUET BENCHMARK   #
-####################################
-EOF
-    assert_count_in_table "lineitem_s3_pxf_parquet" "${LINEITEM_COUNT}"
-
 }
 
 function main {
@@ -558,7 +426,7 @@ function main {
     fi
 
     if [[ ${BENCHMARK_WASB} == true ]]; then
-    	# Azure Blob Storage Benchmark
+        # Azure Blob Storage Benchmark
         run_wasb_benchmark
     fi
 
@@ -566,8 +434,21 @@ function main {
         run_gcs_benchmark
     fi
 
-    if [[ ${BENCHMARK_S3} == true ]]; then
+    if [[ ${BENCHMARK_S3_EXTENSION} == true ]]; then
         run_s3_extension_benchmark
+    fi
+
+    if [[ ${BENCHMARK_S3} == true ]]; then
+        concurrency=${BENCHMARK_S3_CONCURRENCY:-1}
+        run_uuid=${UUID}
+
+        prepare_for_s3_pxf_benchmark
+        for i in `seq 1 ${concurrency}`; do
+            echo "Running S3 Extension Benchmark ${i} with UUID ${run_uuid}"
+            run_s3_pxf_benchmark ${run_uuid} ${i} &
+            run_uuid=$(cat /proc/sys/kernel/random/uuid)
+        done
+        wait
     fi
 
     if [[ ${BENCHMARK_GPHDFS} == true ]]; then
