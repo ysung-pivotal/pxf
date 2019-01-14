@@ -260,22 +260,20 @@ function create_s3_extension_external_tables {
 }
 
 function create_s3_pxf_external_tables() {
-    local uuid
-    local runid
-    uuid=${1}
-    runid=${2}
+    local run_id
+    run_id=${1}
 
-    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_${runid} (LIKE lineitem)
+    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_${run_id} (LIKE lineitem)
         LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark')
         FORMAT 'CSV' (DELIMITER '|')"
-    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet_${runid} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${uuid}/?PROFILE=s3:parquet&SERVER=s3benchmark')
+    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet_${run_id} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark')
         FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import') ENCODING 'UTF8';"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_${runid} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${uuid}/?PROFILE=s3:text&SERVER=s3benchmark')
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_${run_id} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/?PROFILE=s3:text&SERVER=s3benchmark')
         FORMAT 'CSV'"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_parquet_${runid} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${uuid}/?PROFILE=s3:parquet&SERVER=s3benchmark')
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_parquet_${run_id} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark')
         FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
 }
 
@@ -369,24 +367,22 @@ function prepare_for_s3_pxf_benchmark() {
 }
 
 function run_s3_pxf_benchmark () {
-    local uuid
-    local runid
-    uuid=${1}
-    runid=${2}
+    local run_id
+    run_id=${1}
 
-    create_s3_pxf_external_tables ${uuid} ${runid}
+    create_s3_pxf_external_tables ${run_id}
 
     write_header "S3 PXF READ BENCHMARK"
-    assert_count_in_table "lineitem_s3_pxf_${runid}" "${LINEITEM_COUNT}"
+    assert_count_in_table "lineitem_s3_pxf_${run_id}" "${LINEITEM_COUNT}"
 
     write_header "S3 PXF WRITE BENCHMARK"
-    time psql -c "INSERT INTO lineitem_s3_pxf_write_${runid} SELECT * FROM lineitem"
+    time psql -c "INSERT INTO lineitem_s3_pxf_write_${run_id} SELECT * FROM lineitem"
 
     write_header "S3 PXF WRITE PARQUET BENCHMARK"
-    time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet_${runid} SELECT * FROM lineitem"
+    time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet_${run_id} SELECT * FROM lineitem"
 
     write_header "S3 PXF READ PARQUET BENCHMARK"
-    assert_count_in_table "lineitem_s3_pxf_parquet_${runid}" "${LINEITEM_COUNT}"
+    assert_count_in_table "lineitem_s3_pxf_parquet_${run_id}" "${LINEITEM_COUNT}"
 }
 
 function run_s3_extension_benchmark {
@@ -440,13 +436,11 @@ function main {
 
     if [[ ${BENCHMARK_S3} == true ]]; then
         concurrency=${BENCHMARK_S3_CONCURRENCY:-1}
-        run_uuid=${UUID}
 
         prepare_for_s3_pxf_benchmark
         for i in `seq 1 ${concurrency}`; do
-            echo "Running S3 Extension Benchmark ${i} with UUID ${run_uuid}"
-            run_s3_pxf_benchmark ${run_uuid} ${i} &
-            run_uuid=$(cat /proc/sys/kernel/random/uuid)
+            echo "Running S3 Extension Benchmark ${i} with UUID ${UUID}-${i}"
+            run_s3_pxf_benchmark "${i}" &
         done
         wait
     fi
