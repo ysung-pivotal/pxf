@@ -7,10 +7,15 @@ inputs:
   - name: bin_gpdb
   - name: pxf_tarball
 params:
+  AWS_DEFAULT_REGION:
+  AWS_ACCESS_KEY_ID:
+  AWS_SECRET_ACCESS_KEY:
   CLUSTER_NAME: hdp
+  GROUP: smoke
+  IMPERSONATION:
   NODE: c6401.ambari.apache.org
   REALM: AMBARI.APACHE.ORG
-  GROUP: smoke
   TARGET_OS: centos
+  TEST_ENV:
 run:
   path: pxf_src/concourse/scripts/test_pxf_secure.bash
