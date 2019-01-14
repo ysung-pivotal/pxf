@@ -9,6 +9,10 @@ AMBARI_PREFIX="http://${NODE}:8080/api/v1"
 CURL_OPTS="-u admin:admin -H X-Requested-By:ambari"
 
 function run_pxf_smoke_secure() {
+	# Let's make sure that automation/singlecluster directories are writeable
+	chmod a+w pxf_src/automation
+	find pxf_src/automation/tinc* -type d -exec chmod a+w {} \;
+
 	cat > /home/gpadmin/run_pxf_smoke_secure_test.sh <<-EOF
 	set -exo pipefail
 
@@ -32,7 +36,7 @@ function run_pxf_smoke_secure() {
 	echo "Wrote \${wrote_rows} records to external HDFS"
 
 	if [[ \${num_rows} != \${wrote_rows} ]]; then
-		echo 'The number of read/writteng rows does not match'
+		echo 'The number of read/written rows does not match'
 		exit 1
 	fi
 
