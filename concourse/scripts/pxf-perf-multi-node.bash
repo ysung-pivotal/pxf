@@ -361,8 +361,8 @@ function prepare_for_s3_pxf_benchmark() {
 
     # Make a backup of core-site and update it with the S3 core-site
     gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $S3_SERVER_DIR && cp ${PXF_CONF_DIR}/templates/s3-site.xml $S3_SERVER_DIR"
-    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AWS_ACCESS_KEY_ID|$(AWS_ACCESS_KEY_ID)|\" $S3_SERVER_DIR/s3-site.xml"
-    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AWS_SECRET_ACCESS_KEY|$(AWS_SECRET_ACCESS_KEY)|\" $S3_SERVER_DIR/s3-site.xml"
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AWS_ACCESS_KEY_ID|${AWS_ACCESS_KEY_ID}|\" $S3_SERVER_DIR/s3-site.xml"
+    gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AWS_SECRET_ACCESS_KEY|${AWS_SECRET_ACCESS_KEY}|\" $S3_SERVER_DIR/s3-site.xml"
     sync_configuration
 }
 
