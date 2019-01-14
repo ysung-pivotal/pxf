@@ -272,7 +272,7 @@ function create_s3_extension_external_tables {
     psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf (LIKE lineitem)
         LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark') FORMAT 'CSV' (DELIMITER '|');"
     psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import');"
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import') ENCODING 'UTF8';"
 
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_c_write (like lineitem)
         LOCATION('s3://s3.us-east-2.amazonaws.com/gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV'"
