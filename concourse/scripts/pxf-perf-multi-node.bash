@@ -261,20 +261,20 @@ function create_s3_extension_external_tables {
 }
 
 function create_s3_pxf_external_tables() {
-    local run_id
-    run_id=${1}
+    local run_id=${1}
 
     psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_${run_id} (LIKE lineitem)
         LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark')
         FORMAT 'CSV' (DELIMITER '|')"
     psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet_${run_id} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark')
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark')
         FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import') ENCODING 'UTF8';"
+
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_${run_id} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/?PROFILE=s3:text&SERVER=s3benchmark')
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:text&SERVER=s3benchmark')
         FORMAT 'CSV'"
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_parquet_${run_id} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}/?PROFILE=s3:parquet&SERVER=s3benchmark')
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark')
         FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
 }
 
@@ -367,22 +367,37 @@ function prepare_for_s3_pxf_benchmark() {
     sync_configuration
 }
 
+function run_s3_pxf_benchmark_concurrent() {
+    local concurrency=${1}
+    for i in `seq 1 ${concurrency}`; do
+        echo "Starting S3 PXF Benchmark ${i} with UUID ${UUID}-${i}"
+        run_s3_pxf_benchmark "${i}" >/tmp/s3-pxf-benchmark-${i}.bench 2>&1 &
+    done
+    wait
+    # print out all the results from the files
+    cat $(ls /tmp/*.bench)
+}
+
 function run_s3_pxf_benchmark () {
-    local run_id
-    run_id=${1}
+    local run_id=${1}
+
+    echo ""
+    echo "---------------------------------------------------------------------------"
+    echo "--- S3 PXF Benchmark ${i} with UUID ${UUID}-${i} ---"
+    echo "---------------------------------------------------------------------------"
 
     create_s3_pxf_external_tables ${run_id}
 
-    CONCURRENT_RESULT[${run_id}*10+0]=$(write_header "S3 PXF READ BENCHMARK (Run ${run_id})")
+    write_header "S3 PXF READ BENCHMARK (Run ${run_id})"
     assert_count_in_table "lineitem_s3_pxf_${run_id}" "${LINEITEM_COUNT}"
 
-    CONCURRENT_RESULT[${run_id}*10+1]=$(write_header "S3 PXF WRITE BENCHMARK (Run ${run_id})")
-    CONCURRENT_RESULT[${run_id}*10+2]=$(time psql -c "INSERT INTO lineitem_s3_pxf_write_${run_id} SELECT * FROM lineitem")
+    write_header "S3 PXF WRITE BENCHMARK (Run ${run_id})"
+    time psql -c "INSERT INTO lineitem_s3_pxf_write_${run_id} SELECT * FROM lineitem"
 
-    CONCURRENT_RESULT[${run_id}*10+3]=$(write_header "S3 PXF WRITE PARQUET BENCHMARK (Run ${run_id})")
-    CONCURRENT_RESULT[${run_id}*10+4]=$(time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet_${run_id} SELECT * FROM lineitem")
+    write_header "S3 PXF WRITE PARQUET BENCHMARK (Run ${run_id})"
+    time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet_${run_id} SELECT * FROM lineitem"
 
-    CONCURRENT_RESULT[${run_id}*10+5]=$(write_header "S3 PXF READ PARQUET BENCHMARK (Run ${run_id})")
+    write_header "S3 PXF READ PARQUET BENCHMARK (Run ${run_id})"
     assert_count_in_table "lineitem_s3_pxf_parquet_${run_id}" "${LINEITEM_COUNT}"
 }
 
@@ -436,14 +451,14 @@ function main {
     fi
 
     if [[ ${BENCHMARK_S3} == true ]]; then
-        concurrency=${BENCHMARK_S3_CONCURRENCY:-1}
-
         prepare_for_s3_pxf_benchmark
-        for i in `seq 1 ${concurrency}`; do
-            echo "Running S3 Extension Benchmark ${i} with UUID ${UUID}-${i}"
-            run_s3_pxf_benchmark "${i}" &
-        done
-        wait
+
+        concurrency=${BENCHMARK_S3_CONCURRENCY:-1}
+        if [[ ${concurrency} == 1 ]]; then
+            run_s3_pxf_benchmark 0
+        else
+            run_s3_pxf_benchmark_concurrent ${concurrency}
+        fi
     fi
 
     if [[ ${BENCHMARK_GPHDFS} == true ]]; then
