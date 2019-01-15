@@ -12,6 +12,7 @@ scale=$(($SCALE + 0))
 PXF_CONF_DIR="/home/gpadmin/pxf"
 PXF_SERVER_DIR="${PXF_CONF_DIR}/servers"
 UUID=$(cat /proc/sys/kernel/random/uuid)
+declare -a CONCURRENT_RESULT
 
 if [ ${scale} -gt 10 ]; then
   VALIDATION_QUERY="SUM(l_partkey) AS PARTKEYSUM"
@@ -85,8 +86,8 @@ EOF
 }
 
 function create_pxf_external_tables {
-    psql -c "CREATE EXTERNAL TABLE pxf_lineitem_read (like lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_lineitem_write (like lineitem) LOCATION ('pxf://tmp/lineitem_write/?PROFILE=HdfsTextSimple') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
+    psql -c "CREATE EXTERNAL TABLE pxf_hadoop_lineitem_read (like lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write (like lineitem) LOCATION ('pxf://tmp/lineitem_write/?PROFILE=HdfsTextSimple') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
 }
 
 function create_gphdfs_external_tables {
@@ -180,7 +181,7 @@ EOF
 }
 
 function pxf_validate_write_to_external {
-    psql -c "CREATE EXTERNAL TABLE pxf_lineitem_read_after_write (like lineitem) LOCATION ('pxf://tmp/lineitem_write/?PROFILE=HdfsTextSimple') FORMAT 'CSV'"
+    psql -c "CREATE EXTERNAL TABLE pxf_lineitem_read_after_write (LIKE lineitem) LOCATION ('pxf://tmp/lineitem_write/?PROFILE=hdfs:text') FORMAT 'CSV'"
     local external_values
 
     cat << EOF
@@ -204,14 +205,14 @@ EOF
     fi
 }
 
-function run_pxf_benchmark {
+function run_hadoop_benchmark {
     create_pxf_external_tables
 
-    write_header "PXF READ BENCHMARK"
-    time psql -c "SELECT COUNT(*) FROM pxf_lineitem_read"
+    write_header "PXF HADOOP READ BENCHMARK"
+    time psql -c "SELECT COUNT(*) FROM pxf_hadoop_lineitem_read"
 
-    write_header "PXF WRITE BENCHMARK"
-    time write_data "lineitem" "pxf_lineitem_write"
+    write_header "PXF HADOOP WRITE BENCHMARK"
+    time write_data "lineitem" "pxf_hadoop_lineitem_write"
     cat << EOF
 Validating data
 ---------------
@@ -291,7 +292,7 @@ function assert_count_in_table {
     local num_rows=$(time psql -t -c "SELECT COUNT(*) FROM $table_name" | tr -d ' ')
 
     if [[ ${num_rows} != ${expected_count} ]]; then
-        echo "Expected number of rows to be ${expected_count} but was ${num_rows}"
+        echo "Expected number of rows in table ${table_name} to be ${expected_count} but was ${num_rows}"
         exit 1
     fi
 }
@@ -372,16 +373,16 @@ function run_s3_pxf_benchmark () {
 
     create_s3_pxf_external_tables ${run_id}
 
-    write_header "S3 PXF READ BENCHMARK"
+    CONCURRENT_RESULT[${run_id}*10+0]=$(write_header "S3 PXF READ BENCHMARK (Run ${run_id})")
     assert_count_in_table "lineitem_s3_pxf_${run_id}" "${LINEITEM_COUNT}"
 
-    write_header "S3 PXF WRITE BENCHMARK"
-    time psql -c "INSERT INTO lineitem_s3_pxf_write_${run_id} SELECT * FROM lineitem"
+    CONCURRENT_RESULT[${run_id}*10+1]=$(write_header "S3 PXF WRITE BENCHMARK (Run ${run_id})")
+    CONCURRENT_RESULT[${run_id}*10+2]=$(time psql -c "INSERT INTO lineitem_s3_pxf_write_${run_id} SELECT * FROM lineitem")
 
-    write_header "S3 PXF WRITE PARQUET BENCHMARK"
-    time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet_${run_id} SELECT * FROM lineitem"
+    CONCURRENT_RESULT[${run_id}*10+3]=$(write_header "S3 PXF WRITE PARQUET BENCHMARK (Run ${run_id})")
+    CONCURRENT_RESULT[${run_id}*10+4]=$(time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet_${run_id} SELECT * FROM lineitem")
 
-    write_header "S3 PXF READ PARQUET BENCHMARK"
+    CONCURRENT_RESULT[${run_id}*10+5]=$(write_header "S3 PXF READ PARQUET BENCHMARK (Run ${run_id})")
     assert_count_in_table "lineitem_s3_pxf_parquet_${run_id}" "${LINEITEM_COUNT}"
 }
 
@@ -449,7 +450,9 @@ function main {
         run_gphdfs_benchmark
     fi
 
-    run_pxf_benchmark
+    if [[ ${BENCHMARK_HADOOP} == true ]]; then
+        run_hadoop_benchmark
+    fi
 }
 
 main

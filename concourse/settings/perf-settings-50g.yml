@@ -25,6 +25,7 @@ perf-trigger-start: 6:30 AM
 perf-trigger-stop: 6:40 AM
 
 perf-benchmark-adl: false
+perf-benchmark-hadoop: true
 perf-benchmark-s3: true
 perf-benchmark-s3-concurrency: 5
 perf-benchmark-s3-extension: true
