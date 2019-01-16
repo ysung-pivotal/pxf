@@ -88,13 +88,67 @@ EOF
 function create_pxf_external_tables {
     local run_id=${1}
 
-    psql -c "CREATE EXTERNAL TABLE pxf_hadoop_lineitem_read (like lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write_${run_id} (like lineitem) LOCATION ('pxf://tmp/lineitem_write/${run_id}/?PROFILE=HdfsTextSimple') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
+    psql -c "CREATE EXTERNAL TABLE pxf_hadoop_lineitem_read (LIKE lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write_${run_id} (LIKE lineitem) LOCATION ('pxf://tmp/lineitem_write/${run_id}/?PROFILE=HdfsTextSimple') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
+
+    psql -c "CREATE EXTERNAL TABLE pxf_hadoop_lineitem_read_parquet_${run_id} (LIKE lineitem)
+        LOCATION('pxf://tmp/lineitem_write_parquet/${run_id}/?PROFILE=hdfs:parquet')
+        FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import') ENCODING 'UTF8';"
+
+    psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write_parquet_${run_id} (LIKE lineitem)
+        LOCATION('pxf://tmp/lineitem_write_parquet/${run_id}/?PROFILE=hdfs:parquet')
+        FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
 }
 
 function create_gphdfs_external_tables {
-    psql -c "CREATE EXTERNAL TABLE gphdfs_lineitem_read (like lineitem) LOCATION ('gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_read/') FORMAT 'CSV' (DELIMITER '|')"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE gphdfs_lineitem_write (like lineitem) LOCATION ('gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_write_gphdfs/') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
+    psql -c "CREATE EXTERNAL TABLE gphdfs_lineitem_read (LIKE lineitem) LOCATION ('gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_read/') FORMAT 'CSV' (DELIMITER '|')"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE gphdfs_lineitem_write (LIKE lineitem) LOCATION ('gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_write_gphdfs/') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
+}
+
+function create_adl_external_tables() {
+    psql -c "CREATE EXTERNAL TABLE lineitem_adl_read (LIKE lineitem)
+        LOCATION('pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/lineitem/${SCALE}/?PROFILE=adl:text&server=adlbenchmark') FORMAT 'CSV' (DELIMITER '|');"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_adl_write (LIKE lineitem)
+        LOCATION('pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/output/${SCALE}/${UUID}/?PROFILE=adl:text&server=adlbenchmark') FORMAT 'CSV'"
+}
+
+function create_gcs_external_tables() {
+    psql -c "CREATE EXTERNAL TABLE lineitem_gcs_read (LIKE lineitem)
+        LOCATION('pxf://data-gpdb-ud-tpch/${SCALE}/lineitem_data/?PROFILE=gs:text&SERVER=gsbenchmark') FORMAT 'CSV' (DELIMITER '|');"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_gcs_write (LIKE lineitem)
+        LOCATION('pxf://data-gpdb-ud-pxf-benchmark/output/${SCALE}/${UUID}/?PROFILE=gs:text&SERVER=gsbenchmark') FORMAT 'CSV';"
+}
+
+function create_s3_extension_external_tables {
+    psql -c "CREATE EXTERNAL TABLE lineitem_s3_c (LIKE lineitem)
+        LOCATION('s3://s3.us-west-2.amazonaws.com/gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV' (DELIMITER '|')"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_c_write (LIKE lineitem)
+        LOCATION('s3://s3.us-east-2.amazonaws.com/gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV'"
+}
+
+function create_s3_pxf_external_tables() {
+    local run_id=${1}
+
+    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_${run_id} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark')
+        FORMAT 'CSV' (DELIMITER '|')"
+    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet_${run_id} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark')
+        FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import') ENCODING 'UTF8';"
+
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_${run_id} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:text&SERVER=s3benchmark')
+        FORMAT 'CSV'"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_parquet_${run_id} (LIKE lineitem)
+        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark')
+        FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
+}
+
+function create_wasb_external_tables() {
+    psql -c "CREATE EXTERNAL TABLE lineitem_wasb_read (LIKE lineitem)
+        LOCATION('pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/lineitem/${SCALE}/?PROFILE=wasbs:text&server=wasbbenchmark') FORMAT 'CSV' (DELIMITER '|');"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_wasb_write (LIKE lineitem)
+        LOCATION('pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/output/${SCALE}/${UUID}/?PROFILE=wasbs:text&server=wasbbenchmark') FORMAT 'CSV'"
 }
 
 function setup_sshd {
@@ -107,6 +161,10 @@ function setup_sshd {
         /bin/cp -f cluster_env_files/public_key.pem /root/.ssh/id_rsa.pub
         /bin/cp -f cluster_env_files/public_key.openssh /root/.ssh/authorized_keys
     fi
+}
+
+function sync_configuration() {
+    gpssh -u gpadmin -h mdw -v -s -e "source ${GPHOME}/greenplum_path.sh && ${GPHOME}/pxf/bin/pxf cluster sync"
 }
 
 function write_header {
@@ -158,7 +216,7 @@ EOF
 }
 
 function gphdfs_validate_write_to_external {
-    psql -c "CREATE EXTERNAL TABLE gphdfs_lineitem_read_after_write (like lineitem) LOCATION ('gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_write_gphdfs/') FORMAT 'CSV'"
+    psql -c "CREATE EXTERNAL TABLE gphdfs_lineitem_read_after_write (LIKE lineitem) LOCATION ('gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_write_gphdfs/') FORMAT 'CSV'"
     local external_values
 
     cat << EOF
@@ -225,9 +283,14 @@ function run_hadoop_benchmark {
     write_header "PXF HADOOP WRITE BENCHMARK (Run ${run_id})"
     time write_data "lineitem" "pxf_hadoop_lineitem_write_${run_id}"
 
-    echo "/n>>> Validating data <<<"
-
+    echo -ne "\n>>> Validating data <<<"
     pxf_validate_write_to_external ${run_id}
+
+    write_header "PXF HADOOP WRITE PARQUET BENCHMARK (Run ${run_id})"
+    time psql -c "INSERT INTO pxf_hadoop_lineitem_write_parquet_${run_id} SELECT * FROM lineitem"
+
+    write_header "PXF HADOOP READ PARQUET BENCHMARK (Run ${run_id})"
+    assert_count_in_table "pxf_hadoop_lineitem_read_parquet_${run_id}" "${LINEITEM_COUNT}"
 }
 
 function run_gphdfs_benchmark {
@@ -238,61 +301,9 @@ function run_gphdfs_benchmark {
 
     write_header "GPHDFS WRITE BENCHMARK"
     time write_data "lineitem" "gphdfs_lineitem_write"
-    cat << EOF
-Validating data
----------------
-EOF
+
+    echo -ne "\n>>> Validating data <<<"
     gphdfs_validate_write_to_external
-}
-
-function sync_configuration() {
-    gpssh -u gpadmin -h mdw -v -s -e "source ${GPHOME}/greenplum_path.sh && ${GPHOME}/pxf/bin/pxf cluster sync"
-}
-
-function create_adl_external_tables() {
-    psql -c "CREATE EXTERNAL TABLE lineitem_adl_read (LIKE lineitem)
-        LOCATION('pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/lineitem/${SCALE}/?PROFILE=adl:text&server=adlbenchmark') FORMAT 'CSV' (DELIMITER '|');"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_adl_write (LIKE lineitem)
-        LOCATION('pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/output/${SCALE}/${UUID}/?PROFILE=adl:text&server=adlbenchmark') FORMAT 'CSV'"
-}
-
-function create_gcs_external_tables() {
-    psql -c "CREATE EXTERNAL TABLE lineitem_gcs_read (LIKE lineitem)
-        LOCATION('pxf://data-gpdb-ud-tpch/${SCALE}/lineitem_data/?PROFILE=gs:text&SERVER=gsbenchmark') FORMAT 'CSV' (DELIMITER '|');"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_gcs_write (LIKE lineitem)
-        LOCATION('pxf://data-gpdb-ud-pxf-benchmark/output/${SCALE}/${UUID}/?PROFILE=gs:text&SERVER=gsbenchmark') FORMAT 'CSV';"
-}
-
-function create_s3_extension_external_tables {
-    psql -c "CREATE EXTERNAL TABLE lineitem_s3_c (LIKE lineitem)
-        LOCATION('s3://s3.us-west-2.amazonaws.com/gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV' (DELIMITER '|')"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_c_write (like lineitem)
-        LOCATION('s3://s3.us-east-2.amazonaws.com/gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/ config=/home/gpadmin/s3/s3.conf') FORMAT 'CSV'"
-}
-
-function create_s3_pxf_external_tables() {
-    local run_id=${1}
-
-    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_${run_id} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark')
-        FORMAT 'CSV' (DELIMITER '|')"
-    psql -c "CREATE EXTERNAL TABLE lineitem_s3_pxf_parquet_${run_id} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark')
-        FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import') ENCODING 'UTF8';"
-
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_${run_id} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:text&SERVER=s3benchmark')
-        FORMAT 'CSV'"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_s3_pxf_write_parquet_${run_id} (LIKE lineitem)
-        LOCATION('pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark')
-        FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
-}
-
-function create_wasb_external_tables() {
-    psql -c "CREATE EXTERNAL TABLE lineitem_wasb_read (LIKE lineitem)
-        LOCATION('pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/lineitem/${SCALE}/?PROFILE=wasbs:text&server=wasbbenchmark') FORMAT 'CSV' (DELIMITER '|');"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_wasb_write (LIKE lineitem)
-        LOCATION('pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/output/${SCALE}/${UUID}/?PROFILE=wasbs:text&server=wasbbenchmark') FORMAT 'CSV'"
 }
 
 function assert_count_in_table {
@@ -305,6 +316,39 @@ function assert_count_in_table {
         echo "Expected number of rows in table ${table_name} to be ${expected_count} but was ${num_rows}"
         exit 1
     fi
+}
+
+function run_s3_pxf_benchmark () {
+    local run_id=${1}
+
+    echo ""
+    echo "---------------------------------------------------------------------------"
+    echo "--- S3 PXF Benchmark ${i} with UUID ${UUID}-${i} ---"
+    echo "---------------------------------------------------------------------------"
+
+    create_s3_pxf_external_tables ${run_id}
+
+    write_header "S3 PXF READ BENCHMARK (Run ${run_id})"
+    assert_count_in_table "lineitem_s3_pxf_${run_id}" "${LINEITEM_COUNT}"
+
+    write_header "S3 PXF WRITE BENCHMARK (Run ${run_id})"
+    time psql -c "INSERT INTO lineitem_s3_pxf_write_${run_id} SELECT * FROM lineitem"
+
+    write_header "S3 PXF WRITE PARQUET BENCHMARK (Run ${run_id})"
+    time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet_${run_id} SELECT * FROM lineitem"
+
+    write_header "S3 PXF READ PARQUET BENCHMARK (Run ${run_id})"
+    assert_count_in_table "lineitem_s3_pxf_parquet_${run_id}" "${LINEITEM_COUNT}"
+}
+
+function run_s3_extension_benchmark {
+    create_s3_extension_external_tables
+
+    write_header "S3 C Ext READ BENCHMARK"
+    assert_count_in_table "lineitem_s3_c" "${LINEITEM_COUNT}"
+
+    write_header "S3 C Ext WRITE BENCHMARK"
+    time psql -c "INSERT INTO lineitem_s3_c_write SELECT * FROM lineitem"
 }
 
 function run_wasb_benchmark() {
@@ -385,7 +429,7 @@ function run_concurrent_benchmark() {
     local has_failures=0
     for i in `seq 1 ${concurrency}`; do
         echo "Starting PXF Benchmark ${benchmark_function} ${i} with UUID ${UUID}-${i}"
-        benchmark_function "${i}" >/tmp/${benchmark_function}-${i}.bench 2>&1 &
+        ${benchmark_function} "${i}" >/tmp/${benchmark_function}-${i}.bench 2>&1 &
         pids+=("$!")
     done
 
@@ -409,39 +453,6 @@ function run_concurrent_benchmark() {
     if ${has_failures}; then
         exit 1
     fi
-}
-
-function run_s3_pxf_benchmark () {
-    local run_id=${1}
-
-    echo ""
-    echo "---------------------------------------------------------------------------"
-    echo "--- S3 PXF Benchmark ${i} with UUID ${UUID}-${i} ---"
-    echo "---------------------------------------------------------------------------"
-
-    create_s3_pxf_external_tables ${run_id}
-
-    write_header "S3 PXF READ BENCHMARK (Run ${run_id})"
-    assert_count_in_table "lineitem_s3_pxf_${run_id}" "${LINEITEM_COUNT}"
-
-    write_header "S3 PXF WRITE BENCHMARK (Run ${run_id})"
-    time psql -c "INSERT INTO lineitem_s3_pxf_write_${run_id} SELECT * FROM lineitem"
-
-    write_header "S3 PXF WRITE PARQUET BENCHMARK (Run ${run_id})"
-    time psql -c "INSERT INTO lineitem_s3_pxf_write_parquet_${run_id} SELECT * FROM lineitem"
-
-    write_header "S3 PXF READ PARQUET BENCHMARK (Run ${run_id})"
-    assert_count_in_table "lineitem_s3_pxf_parquet_${run_id}" "${LINEITEM_COUNT}"
-}
-
-function run_s3_extension_benchmark {
-    create_s3_extension_external_tables
-
-    write_header "S3 C Ext READ BENCHMARK"
-    assert_count_in_table "lineitem_s3_c" "${LINEITEM_COUNT}"
-
-    write_header "S3 C Ext WRITE BENCHMARK"
-    time psql -c "INSERT INTO lineitem_s3_c_write SELECT * FROM lineitem"
 }
 
 function main {
