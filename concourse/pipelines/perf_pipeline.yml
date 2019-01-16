@@ -302,11 +302,12 @@ jobs:
       BENCHMARK_ADL: {{perf-benchmark-adl}}
       BENCHMARK_HADOOP: {{perf-benchmark-hadoop}}
       BENCHMARK_S3: {{perf-benchmark-s3}}
-      BENCHMARK_S3_CONCURRENCY: {{perf-benchmark-s3-concurrency}}
       BENCHMARK_S3_EXTENSION: {{perf-benchmark-s3-extension}}
       BENCHMARK_GCS: {{perf-benchmark-gcs}}
       BENCHMARK_GPHDFS: {{perf-benchmark-gphdfs}}
       BENCHMARK_WASB: {{perf-benchmark-wasb}}
+      BENCHMARK_S3_CONCURRENCY: {{perf-benchmark-s3-concurrency}}
+      BENCHMARK_HADOOP_CONCURRENCY: {{perf-benchmark-hadoop-concurrency}}
       ADL_ACCOUNT: {{adl-account}}
       ADL_CLIENT_ID: {{adl-client-id}}
       ADL_CREDENTIAL: {{adl-credential}}
