@@ -89,7 +89,7 @@ function create_pxf_external_tables {
     local run_id=${1}
 
     psql -c "CREATE EXTERNAL TABLE pxf_hadoop_lineitem_read (like lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write (like lineitem) LOCATION ('pxf://tmp/lineitem_write/${run_id}/?PROFILE=HdfsTextSimple') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write_${run_id} (like lineitem) LOCATION ('pxf://tmp/lineitem_write/${run_id}/?PROFILE=HdfsTextSimple') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
 }
 
 function create_gphdfs_external_tables {
@@ -384,8 +384,8 @@ function run_concurrent_benchmark() {
     local status_codes=()
     local has_failures=0
     for i in `seq 1 ${concurrency}`; do
-        echo "Starting S3 PXF Benchmark ${i} with UUID ${UUID}-${i}"
-        benchmark_function "${i}" >/tmp/s3-pxf-benchmark-${i}.bench 2>&1 &
+        echo "Starting PXF Benchmark ${benchmark_function} ${i} with UUID ${UUID}-${i}"
+        benchmark_function "${i}" >/tmp/${benchmark_function}-${i}.bench 2>&1 &
         pids+=("$!")
     done
 
