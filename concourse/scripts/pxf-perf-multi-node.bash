@@ -86,8 +86,10 @@ EOF
 }
 
 function create_pxf_external_tables {
+    local run_id=${1}
+
     psql -c "CREATE EXTERNAL TABLE pxf_hadoop_lineitem_read (like lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
-    psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write (like lineitem) LOCATION ('pxf://tmp/lineitem_write/?PROFILE=HdfsTextSimple') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
+    psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write (like lineitem) LOCATION ('pxf://tmp/lineitem_write/${run_id}/?PROFILE=HdfsTextSimple') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
 }
 
 function create_gphdfs_external_tables {
@@ -181,7 +183,9 @@ EOF
 }
 
 function pxf_validate_write_to_external {
-    psql -c "CREATE EXTERNAL TABLE pxf_lineitem_read_after_write (LIKE lineitem) LOCATION ('pxf://tmp/lineitem_write/?PROFILE=hdfs:text') FORMAT 'CSV'"
+    local run_id=${1}
+
+    psql -c "CREATE EXTERNAL TABLE pxf_lineitem_read_after_write_${run_id} (LIKE lineitem) LOCATION ('pxf://tmp/lineitem_write/${run_id}/?PROFILE=hdfs:text') FORMAT 'CSV'"
     local external_values
 
     cat << EOF
@@ -191,7 +195,7 @@ Results from GPDB query
 EOF
     echo ${LINEITEM_VAL_RESULTS}
 
-    external_values=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM pxf_lineitem_read_after_write")
+    external_values=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM pxf_lineitem_read_after_write_${run_id}")
     cat << EOF
 
 Results from external query
@@ -206,18 +210,24 @@ EOF
 }
 
 function run_hadoop_benchmark {
-    create_pxf_external_tables
+    local run_id=${1}
 
-    write_header "PXF HADOOP READ BENCHMARK"
+    echo ""
+    echo "-------------------------------------------------------------------------------"
+    echo "--- PXF HADOOP Benchmark ${i} with UUID ${UUID}-${i} ---"
+    echo "-------------------------------------------------------------------------------"
+
+    create_pxf_external_tables ${run_id}
+
+    write_header "PXF HADOOP READ BENCHMARK (Run ${run_id})"
     time psql -c "SELECT COUNT(*) FROM pxf_hadoop_lineitem_read"
 
-    write_header "PXF HADOOP WRITE BENCHMARK"
-    time write_data "lineitem" "pxf_hadoop_lineitem_write"
-    cat << EOF
-Validating data
----------------
-EOF
-    pxf_validate_write_to_external
+    write_header "PXF HADOOP WRITE BENCHMARK (Run ${run_id})"
+    time write_data "lineitem" "pxf_hadoop_lineitem_write_${run_id}"
+
+    echo "/n>>> Validating data <<<"
+
+    pxf_validate_write_to_external ${run_id}
 }
 
 function run_gphdfs_benchmark {
@@ -367,15 +377,38 @@ function prepare_for_s3_pxf_benchmark() {
     sync_configuration
 }
 
-function run_s3_pxf_benchmark_concurrent() {
-    local concurrency=${1}
+function run_concurrent_benchmark() {
+    local benchmark_function=${1}
+    local concurrency=${2}
+    local pids=()
+    local status_codes=()
+    local has_failures=0
     for i in `seq 1 ${concurrency}`; do
         echo "Starting S3 PXF Benchmark ${i} with UUID ${UUID}-${i}"
-        run_s3_pxf_benchmark "${i}" >/tmp/s3-pxf-benchmark-${i}.bench 2>&1 &
+        benchmark_function "${i}" >/tmp/s3-pxf-benchmark-${i}.bench 2>&1 &
+        pids+=("$!")
     done
-    wait
+
+    # collect status codes from background tasks
+    for p in "${pids[@]}"; do
+        status_code=$(wait "${p}")
+        status_codes+=("${status_code}")
+    done
+
     # print out all the results from the files
     cat $(ls /tmp/*.bench)
+
+    # check for errors in background tasks
+    for i in `seq 1 ${concurrency}`; do
+        if ! ${status_codes[i-1]}; then
+            echo "Run ${i} with process ${p} failed"
+            has_failures=1
+        fi
+    done
+
+    if ${has_failures}; then
+        exit 1
+    fi
 }
 
 function run_s3_pxf_benchmark () {
@@ -457,7 +490,7 @@ function main {
         if [[ ${concurrency} == 1 ]]; then
             run_s3_pxf_benchmark 0
         else
-            run_s3_pxf_benchmark_concurrent ${concurrency}
+            run_concurrent_benchmark run_s3_pxf_benchmark ${concurrency}
         fi
     fi
 
@@ -466,7 +499,12 @@ function main {
     fi
 
     if [[ ${BENCHMARK_HADOOP} == true ]]; then
-        run_hadoop_benchmark
+        concurrency=${BENCHMARK_HADOOP_CONCURRENCY:-1}
+        if [[ ${concurrency} == 1 ]]; then
+            run_hadoop_benchmark 0
+        else
+            run_concurrent_benchmark run_hadoop_benchmark ${concurrency}
+        fi
     fi
 }
 
