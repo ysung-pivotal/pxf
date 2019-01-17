@@ -12,22 +12,26 @@ scale=$(($SCALE + 0))
 PXF_CONF_DIR="/home/gpadmin/pxf"
 PXF_SERVER_DIR="${PXF_CONF_DIR}/servers"
 UUID=$(cat /proc/sys/kernel/random/uuid)
-declare -a CONCURRENT_RESULT
 
 if [ ${scale} -gt 10 ]; then
-  VALIDATION_QUERY="SUM(l_partkey) AS PARTKEYSUM"
+    VALIDATION_QUERY="SUM(l_partkey) AS PARTKEYSUM"
 else
-  VALIDATION_QUERY="COUNT(*) AS Total, COUNT(DISTINCT l_orderkey) AS ORDERKEYS, SUM(l_partkey) AS PARTKEYSUM, COUNT(DISTINCT l_suppkey) AS SUPPKEYS, SUM(l_linenumber) AS LINENUMBERSUM"
+    VALIDATION_QUERY="COUNT(*) AS Total, COUNT(DISTINCT l_orderkey) AS ORDERKEYS, SUM(l_partkey) AS PARTKEYSUM, COUNT(DISTINCT l_suppkey) AS SUPPKEYS, SUM(l_linenumber) AS LINENUMBERSUM"
 fi
 
 LINEITEM_COUNT="unset"
 LINEITEM_VAL_RESULTS="unset"
 source "${CWDIR}/pxf_common.bash"
 
+###########################################
+## TABLE CREATION FUNCTIONS
+###########################################
+
 function readable_external_table_text_query() {
     local name=${1}
     local path=${2}
-    psql -c "CREATE READABLE EXTERNAL TABLE lineitem_${name}_read (LIKE lineitem) LOCATION('${path}') FORMAT 'CSV' (DELIMITER '|')"
+    local delimiter=${3:-'|'}
+    psql -c "CREATE READABLE EXTERNAL TABLE lineitem_${name}_read (LIKE lineitem) LOCATION('${path}') FORMAT 'CSV' (DELIMITER '${delimiter}')"
 }
 
 function writable_external_table_text_query() {
@@ -48,7 +52,31 @@ function writable_external_table_parquet_query() {
     psql -c "CREATE WRITABLE EXTERNAL TABLE lineitem_${name}_write_parquet (LIKE lineitem) LOCATION('${path}') FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export') DISTRIBUTED BY (l_partkey)"
 }
 
-function read_and_validate_table_count {
+###########################################
+## UTILITY FUNCTIONS
+###########################################
+
+function setup_sshd() {
+    service sshd start
+    passwd -u root
+
+    if [[ -d cluster_env_files ]]; then
+        /bin/cp -Rf cluster_env_files/.ssh/* /root/.ssh
+        /bin/cp -f cluster_env_files/private_key.pem /root/.ssh/id_rsa
+        /bin/cp -f cluster_env_files/public_key.pem /root/.ssh/id_rsa.pub
+        /bin/cp -f cluster_env_files/public_key.openssh /root/.ssh/authorized_keys
+    fi
+}
+
+function write_header() {
+    echo -ne "\n\n\n############################################\n# ${1}\n############################################\n"
+}
+
+function write_sub_header() {
+    echo -ne "\n\n${1}\n------------------------------\n"
+}
+
+function read_and_validate_table_count() {
     local table_name="$1"
     local expected_count="$2"
     local num_rows=$(time psql -t -c "SELECT COUNT(*) FROM $table_name" | tr -d ' ')
@@ -59,25 +87,11 @@ function read_and_validate_table_count {
     fi
 }
 
-function write_sub_header() {
-    cat << EOF
-
-${1}
-------------------------------
-EOF
+function sync_configuration() {
+    gpssh -u gpadmin -h mdw -v -s -e "source ${GPHOME}/greenplum_path.sh && ${GPHOME}/pxf/bin/pxf cluster sync"
 }
 
-function write_header {
-    cat << EOF
-
-
-############################################
-# ${1}
-############################################
-EOF
-}
-
-function create_database_and_schema {
+function create_database_and_schema() {
     # Create DB
     psql -d postgres <<EOF
 DROP DATABASE IF EXISTS tpch;
@@ -106,35 +120,77 @@ EOF
     psql -c "CREATE EXTERNAL TABLE lineitem_external (like lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
 }
 
-function prepare_hadoop {
-    local name=${1}
-    local run_id=${2}
-    # create text tables
-    readable_external_table_text_query "${name}" "pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple"
-    writable_external_table_text_query "${name}" "pxf://tmp/lineitem_write/${run_id}/?PROFILE=HdfsTextSimple"
-    # create parquet tables
-    readable_external_table_parquet_query "${name}" "pxf://tmp/lineitem_write_parquet/${run_id}/?PROFILE=hdfs:parquet"
-    writable_external_table_parquet_query "${name}" "pxf://tmp/lineitem_write_parquet/${run_id}/?PROFILE=hdfs:parquet"
+function initial_data_load() {
+    echo -ne "Initial data load from external into GPDB..."
+    LINEITEM_COUNT=$(time psql -c "INSERT INTO lineitem SELECT * FROM lineitem_external" | awk '{print $3}')
+#    echo -ne "\nValidating initial data load..."
+#    validate_write_to_gpdb "lineitem_external" "lineitem"
+    echo -ne "\nInitial data load and validation complete\n"
+
+#    LINEITEM_VAL_RESULTS=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM lineitem")
 }
 
-function prepare_adl() {
-    local name=${1}
-    readable_external_table_text_query "${name}" "pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/lineitem/${SCALE}/?PROFILE=adl:text&server=adlbenchmark"
-    writable_external_table_text_query "${name}" "pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/output/${SCALE}/${UUID}/?PROFILE=adl:text&server=adlbenchmark"
+function validate_write_to_gpdb() {
+    local external=${1}
+    local internal=${2}
+    local external_values
+    local gpdb_values
 
+    gpdb_values=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM ${internal}")
+    write_sub_header "Results from GPDB query"
+    echo ${gpdb_values}
+
+    external_values=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM ${external}")
+    write_sub_header "Results from external query"
+    echo ${external_values}
+
+    if [[ "${external_values}" != "${gpdb_values}" ]]; then
+        echo ERROR! Unable to validate data written from external to GPDB
+        exit 1
+    fi
+}
+
+function validate_write_to_external() {
+    local benchmark_name=${1}
+    local path=${2}
+    local name="${benchmark_name}_from_write"
+
+    readable_external_table_text_query "${name}" "${path}" ","
+
+    write_sub_header "Results from GPDB query"
+    echo ${LINEITEM_VAL_RESULTS}
+
+    local external_values=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM lineitem_${name}_read")
+    write_sub_header "Results from external query"
+    echo ${external_values}
+
+    if [[ "${external_values}" != "${LINEITEM_VAL_RESULTS}" ]]; then
+        echo ERROR! Unable to validate data written from GPDB to external
+        exit 1
+    fi
+}
+
+###########################################
+## TEST CONFIGURATION SECTION
+###########################################
+
+function configure_adl_server() {
     ADL_SERVER_DIR="${PXF_SERVER_DIR}/adlbenchmark"
     # Create the ADL Benchmark server and copy core-site.xml
     gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $ADL_SERVER_DIR && cp ${PXF_CONF_DIR}/templates/adl-site.xml $ADL_SERVER_DIR"
     gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_ADL_REFRESH_URL|${ADL_REFRESH_URL}|\" ${ADL_SERVER_DIR}/adl-site.xml"
     gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_ADL_CLIENT_ID|${ADL_CLIENT_ID}|\" ${ADL_SERVER_DIR}/adl-site.xml"
     gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_ADL_CREDENTIAL|${ADL_CREDENTIAL}|\" ${ADL_SERVER_DIR}/adl-site.xml"
+    sync_configuration
 }
 
-function prepare_gcs() {
+function create_adl_tables() {
     local name=${1}
-    readable_external_table_text_query "${name}" "pxf://data-gpdb-ud-tpch/${SCALE}/lineitem_data/?PROFILE=gs:text&SERVER=gsbenchmark"
-    writable_external_table_text_query "${name}" "pxf://data-gpdb-ud-pxf-benchmark/output/${SCALE}/${UUID}/?PROFILE=gs:text&SERVER=gsbenchmark"
+    readable_external_table_text_query "${name}" "pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/lineitem/${SCALE}/?PROFILE=adl:text&server=adlbenchmark"
+    writable_external_table_text_query "${name}" "pxf://${ADL_ACCOUNT}.azuredatalakestore.net/adl-profile-test/output/${SCALE}/${UUID}/?PROFILE=adl:text&server=adlbenchmark"
+}
 
+function configure_gcs_server() {
     cat << EOF > /tmp/gsc-ci-service-account.key.json
 ${GOOGLE_CREDENTIALS}
 EOF
@@ -143,19 +199,33 @@ EOF
     gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $GS_SERVER_DIR && cp ${PXF_CONF_DIR}/templates/gs-site.xml $GS_SERVER_DIR"
     gpscp -u gpadmin -h mdw /tmp/gsc-ci-service-account.key.json =:${GS_SERVER_DIR}/
     gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_GOOGLE_STORAGE_KEYFILE|${GS_SERVER_DIR}/gsc-ci-service-account.key.json|\" ${GS_SERVER_DIR}/gs-site.xml"
+    sync_configuration
 }
 
-function prepare_gphdfs {
+function create_gcs_tables() {
+    local name=${1}
+    readable_external_table_text_query "${name}" "pxf://data-gpdb-ud-tpch/${SCALE}/lineitem_data/?PROFILE=gs:text&SERVER=gsbenchmark"
+    writable_external_table_text_query "${name}" "pxf://data-gpdb-ud-pxf-benchmark/output/${SCALE}/${UUID}/?PROFILE=gs:text&SERVER=gsbenchmark"
+}
+
+function create_gphdfs_tables() {
     local name=${1}
     readable_external_table_text_query "${name}" "gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_read/"
     writable_external_table_text_query "${name}" "gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_gphdfs_write/"
 }
 
-function prepare_s3_extension {
+function create_hadoop_tables() {
     local name=${1}
-    readable_external_table_text_query "${name}" "s3://s3.us-west-2.amazonaws.com/gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/ config=/home/gpadmin/s3/s3.conf"
-    writable_external_table_text_query "${name}" "s3://s3.us-east-2.amazonaws.com/gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/ config=/home/gpadmin/s3/s3.conf"
+    local run_id=${2}
+    # create text tables
+    readable_external_table_text_query "${name}" "pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple"
+    writable_external_table_text_query "${name}" "pxf://tmp/lineitem_hadoop_write/${run_id}/?PROFILE=HdfsTextSimple"
+    # create parquet tables
+    readable_external_table_parquet_query "${name}" "pxf://tmp/lineitem_write_parquet/${run_id}/?PROFILE=hdfs:parquet"
+    writable_external_table_parquet_query "${name}" "pxf://tmp/lineitem_write_parquet/${run_id}/?PROFILE=hdfs:parquet"
+}
 
+function configure_s3_extension() {
     psql -c "CREATE OR REPLACE FUNCTION write_to_s3() RETURNS integer AS '\$libdir/gps3ext.so', 's3_export' LANGUAGE C STABLE"
     psql -c "CREATE OR REPLACE FUNCTION read_from_s3() RETURNS integer AS '\$libdir/gps3ext.so', 's3_import' LANGUAGE C STABLE"
     psql -c "CREATE PROTOCOL s3 (writefunc = write_to_s3, readfunc = read_from_s3)"
@@ -182,15 +252,10 @@ EOF
     gpscp -u gpadmin -f /tmp/segment_hosts /tmp/s3.conf =:~/s3/s3.conf
 }
 
-function prepare_s3() {
+function create_s3_extension_tables() {
     local name=${1}
-    local run_id=${2}
-    # create text tables
-    readable_external_table_text_query "${name}" "pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark"
-    writable_external_table_text_query "${name}" "pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:text&SERVER=s3benchmark"
-    # create parquet tables
-    readable_external_table_parquet_query "${name}" "pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark"
-    writable_external_table_parquet_query "${name}" "pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark"
+    readable_external_table_text_query "${name}" "s3://s3.us-west-2.amazonaws.com/gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/ config=/home/gpadmin/s3/s3.conf"
+    writable_external_table_text_query "${name}" "s3://s3.us-east-2.amazonaws.com/gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/ config=/home/gpadmin/s3/s3.conf"
 }
 
 function configure_s3_server() {
@@ -203,101 +268,35 @@ function configure_s3_server() {
     sync_configuration
 }
 
-function prepare_wasb() {
+function create_s3_tables() {
     local name=${1}
-    readable_external_table_text_query ${name} "pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/lineitem/${SCALE}/?PROFILE=wasbs:text&server=wasbbenchmark"
-    writable_external_table_text_query ${name} "pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/output/${SCALE}/${UUID}/?PROFILE=wasbs:text&server=wasbbenchmark"
+    local run_id=${2}
+    # create text tables
+    readable_external_table_text_query "${name}" "pxf://gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/?PROFILE=s3:text&SERVER=s3benchmark"
+    writable_external_table_text_query "${name}" "pxf://gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:text&SERVER=s3benchmark"
+    # create parquet tables
+    readable_external_table_parquet_query "${name}" "pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark"
+    writable_external_table_parquet_query "${name}" "pxf://gpdb-ud-pxf-benchmark/s3-profile-parquet-test/output/${SCALE}/${UUID}-${run_id}/?PROFILE=s3:parquet&SERVER=s3benchmark"
+}
 
+function configure_wasb_server() {
     WASB_SERVER_DIR="${PXF_SERVER_DIR}/wasbbenchmark"
     # Create the WASB Benchmark server and copy core-site.xml
     gpssh -u gpadmin -h mdw -v -s -e "mkdir -p $WASB_SERVER_DIR && cp ${PXF_CONF_DIR}/templates/wasbs-site.xml $WASB_SERVER_DIR"
     gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AZURE_BLOB_STORAGE_ACCOUNT_NAME|${WASB_ACCOUNT_NAME}|\" ${WASB_SERVER_DIR}/wasbs-site.xml"
     gpssh -u gpadmin -h mdw -v -s -e "sed -i \"s|YOUR_AZURE_BLOB_STORAGE_ACCOUNT_KEY|${WASB_ACCOUNT_KEY}|\" ${WASB_SERVER_DIR}/wasbs-site.xml"
+    sync_configuration
 }
 
-function setup_sshd {
-    service sshd start
-    passwd -u root
-
-    if [[ -d cluster_env_files ]]; then
-        /bin/cp -Rf cluster_env_files/.ssh/* /root/.ssh
-        /bin/cp -f cluster_env_files/private_key.pem /root/.ssh/id_rsa
-        /bin/cp -f cluster_env_files/public_key.pem /root/.ssh/id_rsa.pub
-        /bin/cp -f cluster_env_files/public_key.openssh /root/.ssh/authorized_keys
-    fi
+function create_wasb_tables() {
+    local name=${1}
+    readable_external_table_text_query ${name} "pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/lineitem/${SCALE}/?PROFILE=wasbs:text&server=wasbbenchmark"
+    writable_external_table_text_query ${name} "pxf://pxf-container@${WASB_ACCOUNT_NAME}.blob.core.windows.net/wasb-profile-test/output/${SCALE}/${UUID}/?PROFILE=wasbs:text&server=wasbbenchmark"
 }
 
-function sync_configuration() {
-    gpssh -u gpadmin -h mdw -v -s -e "source ${GPHOME}/greenplum_path.sh && ${GPHOME}/pxf/bin/pxf cluster sync"
-}
-
-function write_data {
-    local dest
-    local source
-    dest=${2}
-    source=${1}
-    psql -c "INSERT INTO ${dest} SELECT * FROM ${source}"
-}
-
-function validate_write_to_gpdb {
-    local external
-    local internal
-    local external_values
-    local gpdb_values
-    external=${1}
-    internal=${2}
-
-    gpdb_values=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM ${internal}")
-    write_sub_header "Results from GPDB query"
-    echo ${gpdb_values}
-
-    external_values=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM ${external}")
-    write_sub_header "Results from external query"
-    echo ${external_values}
-
-    if [[ "${external_values}" != "${gpdb_values}" ]]; then
-        echo ERROR! Unable to validate data written from external to GPDB
-        exit 1
-    fi
-}
-
-function gphdfs_validate_write_to_external {
-    psql -c "CREATE EXTERNAL TABLE gphdfs_lineitem_read_after_write (LIKE lineitem) LOCATION ('gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_write_gphdfs/') FORMAT 'CSV'"
-    local external_values
-
-    write_sub_header "Results from GPDB query"
-    echo ${LINEITEM_VAL_RESULTS}
-
-    external_values=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM gphdfs_lineitem_read_after_write")
-    write_sub_header "Results from external query"
-    echo ${external_values}
-
-    if [[ "${external_values}" != "${LINEITEM_VAL_RESULTS}" ]]; then
-        echo ERROR! Unable to validate data written from GPDB to external
-        exit 1
-    fi
-}
-
-function pxf_validate_write_to_external {
-    local run_id=${1}
-    local external_values
-    local validation_table_name="pxf_lineitem_read_after_write_${run_id}"
-
-    psql -c "CREATE EXTERNAL TABLE ${validation_table_name} (LIKE lineitem)
-        LOCATION ('pxf://tmp/lineitem_write/${run_id}/?PROFILE=hdfs:text') FORMAT 'CSV'"
-
-    write_sub_header "Results from GPDB query"
-    echo ${LINEITEM_VAL_RESULTS}
-
-    external_values=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM ${validation_table_name}")
-    write_sub_header "Results from external query"
-    echo ${external_values}
-
-    if [[ "${external_values}" != "${LINEITEM_VAL_RESULTS}" ]]; then
-        echo ERROR! Unable to validate data written from GPDB to external
-        exit 1
-    fi
-}
+###########################################
+## BENCHMARK FUNCTIONS
+###########################################
 
 function run_concurrent_benchmark() {
     local benchmark_fn=${1}
@@ -341,13 +340,12 @@ function run_concurrent_benchmark() {
     fi
 }
 
-function run_simple_benchmark() {
+function run_text_benchmark() {
     local prepare_test_fn=${1}
     local benchmark_name=${2}
     local benchmark_description=${3}
 
     ${prepare_test_fn} ${benchmark_name}
-    sync_configuration
 
     write_header "${benchmark_description} PXF READ TEXT BENCHMARK"
     read_and_validate_table_count "lineitem_${benchmark_name}_read" "${LINEITEM_COUNT}"
@@ -369,16 +367,12 @@ function run_text_and_parquet_benchmark() {
     echo "---------------------------------------------------------------------------"
 
     ${prepare_test_fn} "${name}" "${run_id}"
-    # sync_configuration do we need to sync configuration here?
 
     write_header "${benchmark_description} PXF READ TEXT BENCHMARK (Run ${run_id})"
     read_and_validate_table_count "lineitem_${name}_read" "${LINEITEM_COUNT}"
 
     write_header "${benchmark_description} PXF WRITE TEXT BENCHMARK (Run ${run_id})"
     time psql -c "INSERT INTO lineitem_${name}_write SELECT * FROM lineitem"
-
-#    echo -ne "\n>>> Validating data <<<\n"
-#    pxf_validate_write_to_external ${run_id}
 
     write_header "${benchmark_description} PXF WRITE PARQUET BENCHMARK (Run ${run_id})"
     time psql -c "INSERT INTO lineitem_${name}_write_parquet SELECT * FROM lineitem"
@@ -387,7 +381,7 @@ function run_text_and_parquet_benchmark() {
     read_and_validate_table_count "lineitem_${name}_read_parquet" "${LINEITEM_COUNT}"
 }
 
-function main {
+function main() {
     setup_sshd
     remote_access_to_gpdb
     install_gpdb_binary
@@ -401,28 +395,26 @@ function main {
     source ${GPHOME}/greenplum_path.sh
     create_database_and_schema
 
-    echo "Loading data from external into GPDB..."
-    write_data "lineitem_external" "lineitem"
-    echo "Validating loaded data..."
-    validate_write_to_gpdb "lineitem_external" "lineitem"
-    echo -e "Data loading and validation complete\n"
-    LINEITEM_COUNT=$(psql -t -c "SELECT COUNT(*) FROM lineitem" | tr -d ' ')
-#    LINEITEM_VAL_RESULTS=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM lineitem")
+    initial_data_load
 
     if [[ ${BENCHMARK_ADL} == true ]]; then
-        run_simple_benchmark prepare_adl "ADL" "AZURE DATA LAKE"
+        configure_adl_server
+        run_text_benchmark create_adl_tables "ADL" "AZURE DATA LAKE"
     fi
 
     if [[ ${BENCHMARK_WASB} == true ]]; then
-        run_simple_benchmark prepare_wasb "wasb" "AZURE BLOB STORAGE"
+        configure_wasb_server
+        run_text_benchmark create_wasb_tables "wasb" "AZURE BLOB STORAGE"
     fi
 
     if [[ ${BENCHMARK_GCS} == true ]]; then
-        run_simple_benchmark prepare_gcs "gcs" "GOOGLE CLOUD STORAGE"
+        configure_gcs_server
+        run_text_benchmark create_gcs_tables "gcs" "GOOGLE CLOUD STORAGE"
     fi
 
     if [[ ${BENCHMARK_S3_EXTENSION} == true ]]; then
-        run_simple_benchmark prepare_s3_extension "s3_c" "S3 C EXTENSION"
+        configure_s3_extension
+        run_text_benchmark create_s3_extension_tables "s3_c" "S3 C EXTENSION"
     fi
 
     if [[ ${BENCHMARK_S3} == true ]]; then
@@ -430,24 +422,26 @@ function main {
 
         concurrency=${BENCHMARK_S3_CONCURRENCY:-1}
         if [[ ${concurrency} == 1 ]]; then
-            run_text_and_parquet_benchmark prepare_s3 "s3" "S3" "0"
+            run_text_and_parquet_benchmark create_s3_tables "s3" "S3" "0"
         else
-            run_concurrent_benchmark run_text_and_parquet_benchmark prepare_s3 "s3" "S3" "${concurrency}"
+            run_concurrent_benchmark run_text_and_parquet_benchmark create_s3_tables "s3" "S3" "${concurrency}"
         fi
     fi
 
     if [[ ${BENCHMARK_GPHDFS} == true ]]; then
-        run_simple_benchmark prepare_gphdfs "gphdfs" "GPHDFS"
-        echo -ne "\n>>> Validating data <<<\n"
-        gphdfs_validate_write_to_external
+        run_text_benchmark create_gphdfs_tables "gphdfs" "GPHDFS"
+        echo -ne "\n>>> Validating GPHDFS data <<<\n"
+        validate_write_to_external "gphdfs" "gphdfs://${HADOOP_HOSTNAME}:8020/tmp/lineitem_gphdfs_write/"
     fi
 
     if [[ ${BENCHMARK_HADOOP} == true ]]; then
         concurrency=${BENCHMARK_HADOOP_CONCURRENCY:-1}
         if [[ ${concurrency} == 1 ]]; then
-            run_text_and_parquet_benchmark prepare_hadoop "hadoop" "HADOOP" "0"
+            run_text_and_parquet_benchmark create_hadoop_tables "hadoop" "HADOOP" "0"
+            echo -ne "\n>>> Validating HADOOP data <<<\n"
+            validate_write_to_external "hadoop" "pxf://tmp/lineitem_hadoop_write/0/?PROFILE=HdfsTextSimple"
         else
-            run_concurrent_benchmark run_text_and_parquet_benchmark prepare_hadoop "hadoop" "HADOOP" ${concurrency}
+            run_concurrent_benchmark run_text_and_parquet_benchmark create_hadoop_tables "hadoop" "HADOOP" ${concurrency}
         fi
     fi
 }
