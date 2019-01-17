@@ -288,7 +288,7 @@ function run_hadoop_benchmark {
     write_header "PXF HADOOP WRITE BENCHMARK (Run ${run_id})"
     time write_data "lineitem" "pxf_hadoop_lineitem_write_${run_id}"
 
-    echo -ne "\n>>> Validating data <<<"
+    echo -ne "\n>>> Validating data <<<\n"
     pxf_validate_write_to_external ${run_id}
 
     write_header "PXF HADOOP WRITE PARQUET BENCHMARK (Run ${run_id})"
@@ -307,7 +307,7 @@ function run_gphdfs_benchmark {
     write_header "GPHDFS WRITE BENCHMARK"
     time write_data "lineitem" "gphdfs_lineitem_write"
 
-    echo -ne "\n>>> Validating data <<<"
+    echo -ne "\n>>> Validating data <<<\n"
     gphdfs_validate_write_to_external
 }
 
@@ -438,24 +438,28 @@ function run_concurrent_benchmark() {
         pids+=("$!")
     done
 
+    set +e
     # collect status codes from background tasks
     for p in "${pids[@]}"; do
-        status_code=$(wait "${p}")
+        wait ${p}
+        status_code=$?
         status_codes+=("${status_code}")
     done
+    set -e
 
     # print out all the results from the files
     cat $(ls /tmp/*.bench)
 
     # check for errors in background tasks
+    local has_failures=0
     for i in `seq 1 ${concurrency}`; do
-        if ! ${status_codes[i-1]}; then
+        if [[ ${status_codes[i-1]} != 0 ]]; then
             echo "Run ${i} with process ${p} failed"
             has_failures=1
         fi
     done
 
-    if ${has_failures}; then
+    if [[ ${has_failures} != 0 ]]; then
         exit 1
     fi
 }
