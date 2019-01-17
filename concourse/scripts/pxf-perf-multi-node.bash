@@ -454,7 +454,7 @@ function run_concurrent_benchmark() {
     local has_failures=0
     for i in `seq 1 ${concurrency}`; do
         if [[ ${status_codes[i-1]} != 0 ]]; then
-            echo "Run ${i} with process ${p} failed"
+            echo "Run ${i} failed"
             has_failures=1
         fi
     done
