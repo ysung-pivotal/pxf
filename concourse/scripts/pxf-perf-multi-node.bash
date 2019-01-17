@@ -88,13 +88,18 @@ EOF
 function create_pxf_external_tables {
     local run_id=${1}
 
-    psql -c "CREATE EXTERNAL TABLE pxf_hadoop_lineitem_read (LIKE lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
+    echo "creating pxf_hadoop_lineitem_read_${run_id} table"
+    psql -c "CREATE EXTERNAL TABLE pxf_hadoop_lineitem_read_${run_id} (LIKE lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
+
+    echo "creating pxf_hadoop_lineitem_write_${run_id} table"
     psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write_${run_id} (LIKE lineitem) LOCATION ('pxf://tmp/lineitem_write/${run_id}/?PROFILE=HdfsTextSimple') FORMAT 'CSV' DISTRIBUTED BY (l_partkey)"
 
+    echo "creating pxf_hadoop_lineitem_read_parquet_${run_id} table"
     psql -c "CREATE EXTERNAL TABLE pxf_hadoop_lineitem_read_parquet_${run_id} (LIKE lineitem)
         LOCATION('pxf://tmp/lineitem_write_parquet/${run_id}/?PROFILE=hdfs:parquet')
         FORMAT 'CUSTOM' (FORMATTER='pxfwritable_import') ENCODING 'UTF8';"
 
+    echo "creating pxf_hadoop_lineitem_write_parquet_${run_id} table"
     psql -c "CREATE WRITABLE EXTERNAL TABLE pxf_hadoop_lineitem_write_parquet_${run_id} (LIKE lineitem)
         LOCATION('pxf://tmp/lineitem_write_parquet/${run_id}/?PROFILE=hdfs:parquet')
         FORMAT 'CUSTOM' (FORMATTER='pxfwritable_export');"
@@ -278,7 +283,7 @@ function run_hadoop_benchmark {
     create_pxf_external_tables ${run_id}
 
     write_header "PXF HADOOP READ BENCHMARK (Run ${run_id})"
-    time psql -c "SELECT COUNT(*) FROM pxf_hadoop_lineitem_read"
+    time psql -c "SELECT COUNT(*) FROM pxf_hadoop_lineitem_read_${run_id}"
 
     write_header "PXF HADOOP WRITE BENCHMARK (Run ${run_id})"
     time write_data "lineitem" "pxf_hadoop_lineitem_write_${run_id}"
