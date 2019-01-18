@@ -69,11 +69,11 @@ function setup_sshd() {
 }
 
 function write_header() {
-    echo -ne "\n\n\n############################################\n# ${1}\n############################################\n"
+    echo -ne "\n\n############################################\n# ${1}\n############################################\n"
 }
 
 function write_sub_header() {
-    echo -ne "\n\n${1}\n------------------------------\n"
+    echo -ne "\n${1}\n------------------------------\n"
 }
 
 function read_and_validate_table_count() {
@@ -116,18 +116,16 @@ CREATE TABLE lineitem (
     l_comment VARCHAR(44) NOT NULL
 ) DISTRIBUTED BY (l_partkey);
 EOF
-
-    psql -c "CREATE EXTERNAL TABLE lineitem_external (like lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
 }
 
 function initial_data_load() {
-    echo -ne "Initial data load from external into GPDB..."
+    psql -c "CREATE EXTERNAL TABLE lineitem_external (like lineitem) LOCATION ('pxf://tmp/lineitem_read/?PROFILE=HdfsTextSimple') FORMAT 'CSV' (DELIMITER '|')"
+    echo -ne "\nInitial data load from external into GPDB..."
     LINEITEM_COUNT=$(time psql -c "INSERT INTO lineitem SELECT * FROM lineitem_external" | awk '{print $3}')
 #    echo -ne "\nValidating initial data load..."
 #    validate_write_to_gpdb "lineitem_external" "lineitem"
     echo -ne "\nInitial data load and validation complete\n"
-
-#    LINEITEM_VAL_RESULTS=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM lineitem")
+    echo -ne "${LINEITEM_COUNT} items loaded into the GPDB"
 }
 
 function validate_write_to_gpdb() {
@@ -156,6 +154,10 @@ function validate_write_to_external() {
     local name="${benchmark_name}_from_write"
 
     readable_external_table_text_query "${name}" "${path}" ","
+
+    if [[ ${LINEITEM_VAL_RESULTS} == unset ]]; then
+        LINEITEM_VAL_RESULTS=$(psql -t -c "SELECT ${VALIDATION_QUERY} FROM lineitem")
+    fi
 
     write_sub_header "Results from GPDB query"
     echo ${LINEITEM_VAL_RESULTS}
@@ -372,10 +374,20 @@ function run_text_and_parquet_benchmark() {
     read_and_validate_table_count "lineitem_${name}_read" "${LINEITEM_COUNT}"
 
     write_header "${benchmark_description} PXF WRITE TEXT BENCHMARK (Run ${run_id})"
-    time psql -c "INSERT INTO lineitem_${name}_write SELECT * FROM lineitem"
+    local write_count=$(time psql -c "INSERT INTO lineitem_${name}_write SELECT * FROM lineitem" | awk '{print $3}')
+
+    if [[ "${write_count}" != "${LINEITEM_COUNT}" ]]; then
+        echo "ERROR! Unable to validate text data written from GPDB to external. Expected ${LINEITEM_COUNT}, got ${write_count}"
+        exit 1
+    fi
 
     write_header "${benchmark_description} PXF WRITE PARQUET BENCHMARK (Run ${run_id})"
-    time psql -c "INSERT INTO lineitem_${name}_write_parquet SELECT * FROM lineitem"
+    local write_parquet_count=$(time psql -c "INSERT INTO lineitem_${name}_write_parquet SELECT * FROM lineitem" | awk '{print $3}')
+
+    if [[ "${write_parquet_count}" != "${LINEITEM_COUNT}" ]]; then
+        echo "ERROR! Unable to validate parquet data written from GPDB to external. Expected ${LINEITEM_COUNT}, got ${write_parquet_count}"
+        exit 1
+    fi
 
     write_header "${benchmark_description} PXF READ PARQUET BENCHMARK (Run ${run_id})"
     read_and_validate_table_count "lineitem_${name}_read_parquet" "${LINEITEM_COUNT}"
