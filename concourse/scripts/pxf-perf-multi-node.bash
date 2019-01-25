@@ -426,7 +426,13 @@ function main() {
 
     if [[ ${BENCHMARK_S3_EXTENSION} == true ]]; then
         configure_s3_extension
-        run_text_benchmark create_s3_extension_tables "s3_c" "S3 C EXTENSION"
+
+        concurrency=${BENCHMARK_S3_CONCURRENCY:-1}
+        if [[ ${concurrency} == 1 ]]; then
+            run_text_and_parquet_benchmark create_s3_extension_tables "s3_c" "S3 C EXTENSION" "0"
+        else
+            run_concurrent_benchmark run_text_and_parquet_benchmark create_s3_extension_tables "s3_c" "S3 C EXTENSION" "${concurrency}"
+        fi
     fi
 
     if [[ ${BENCHMARK_S3} == true ]]; then
