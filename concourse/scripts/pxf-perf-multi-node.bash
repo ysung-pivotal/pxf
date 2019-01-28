@@ -256,8 +256,9 @@ EOF
 
 function create_s3_extension_tables() {
     local name=${1}
+    local run_id=${2}
     readable_external_table_text_query "${name}" "s3://s3.us-west-2.amazonaws.com/gpdb-ud-scratch/s3-profile-test/lineitem/${SCALE}/ config=/home/gpadmin/s3/s3.conf"
-    writable_external_table_text_query "${name}" "s3://s3.us-east-2.amazonaws.com/gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}/ config=/home/gpadmin/s3/s3.conf"
+    writable_external_table_text_query "${name}" "s3://s3.us-east-2.amazonaws.com/gpdb-ud-pxf-benchmark/s3-profile-test/output/${SCALE}/${UUID}-${run_id}/ config=/home/gpadmin/s3/s3.conf"
 }
 
 function configure_s3_server() {
