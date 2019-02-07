@@ -403,7 +403,7 @@ jobs:
     params:
       ACCESS_KEY_ID: {{tf-machine-access-key-id}}
       SECRET_ACCESS_KEY: {{tf-machine-secret-access-key}}
-      GROUP: gpdb,proxy,profile
+      GROUP: gpdb,hive,hbase,profile
       TEST_ENV: {{test-env}}
       HADOOP_CLIENT: HDP
       TARGET_OS: centos
@@ -474,7 +474,7 @@ jobs:
     params:
       ACCESS_KEY_ID: {{tf-machine-access-key-id}}
       SECRET_ACCESS_KEY: {{tf-machine-secret-access-key}}
-      GROUP: gpdb,proxy,profile
+      GROUP: gpdb
       TEST_ENV: {{test-env}}
       HADOOP_CLIENT: HDP
       TEST_OS: ubuntu
@@ -517,7 +517,7 @@ jobs:
       AWS_ACCESS_KEY_ID: {{tf-machine-access-key-id}}
       AWS_SECRET_ACCESS_KEY: {{tf-machine-secret-access-key}}
       AWS_DEFAULT_REGION: {{aws-region}}
-      GROUP: gpdb,proxy
+      GROUP: gpdb
       IMPERSONATION: true
       TEST_ENV: {{test-env}}
       TARGET_OS: centos
@@ -559,7 +559,7 @@ jobs:
       AWS_ACCESS_KEY_ID: {{tf-machine-access-key-id}}
       AWS_SECRET_ACCESS_KEY: {{tf-machine-secret-access-key}}
       AWS_DEFAULT_REGION: {{aws-region}}
-      GROUP: gpdb,proxy
+      GROUP: gpdb
       IMPERSONATION: false
       TEST_ENV: {{test-env}}
       TARGET_OS: centos
@@ -645,7 +645,7 @@ jobs:
     params:
       ACCESS_KEY_ID: {{tf-machine-access-key-id}}
       SECRET_ACCESS_KEY: {{tf-machine-secret-access-key}}
-      GROUP: gpdb,proxy
+      GROUP: gpdb,hive,hbase
       TARGET_OS: centos
 {% if acceptance %}
       ACCEPTANCE: true
@@ -682,7 +682,7 @@ jobs:
     params:
       ACCESS_KEY_ID: {{tf-machine-access-key-id}}
       SECRET_ACCESS_KEY: {{tf-machine-secret-access-key}}
-      GROUP: gpdb,proxy,profile
+      GROUP: gpdb,hive,hbase,profile
       TEST_ENV: {{test-env}}
       TARGET_OS: centos
       HADOOP_CLIENT: CDH
