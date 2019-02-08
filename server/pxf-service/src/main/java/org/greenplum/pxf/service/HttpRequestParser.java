@@ -17,8 +17,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
@@ -90,11 +92,8 @@ public class HttpRequestParser implements RequestParser<HttpHeaders> {
 
         context.setDataSource(params.removeProperty("DATA-DIR"));
 
-        boolean isFilterPresent = params.removeBoolProperty("HAS-FILTER");
-        if (isFilterPresent) {
-            context.setFilterString(params.removeProperty("FILTER"));
-        }
-        context.setFilterStringValid(isFilterPresent);
+        // result.setFilterString(); taken care by parseFilterProjectionInformationAndTupleDescription()
+        // result.setFilterStringValid(); taken care by parseFilterProjectionInformationAndTupleDescription()
 
         context.setFragmenter(params.removeUserProperty("FRAGMENTER"));
 
@@ -135,8 +134,8 @@ public class HttpRequestParser implements RequestParser<HttpHeaders> {
         context.setTransactionId(params.removeProperty("XID"));
 
         // parse tuple description
-        parseTupleDescription(params, context);
-        // result.setTupleDescription(); taken care by parseTupleDescription()
+        parseFilterProjectionInformationAndTupleDescription(params, context);
+        // result.setTupleDescription(); taken care by parseFilterProjectionInformationAndTupleDescription()
 
         context.setUser(params.removeProperty("USER"));
 
@@ -249,39 +248,50 @@ public class HttpRequestParser implements RequestParser<HttpHeaders> {
      * Sets the tuple description for the record
      * Attribute Projection information is optional
      */
-    private void parseTupleDescription(RequestMap params, RequestContext context) {
+    private void parseFilterProjectionInformationAndTupleDescription(RequestMap params, RequestContext context) {
+        Set<Integer> attrsProjected = new HashSet<>();
+
+        String filterString = params.removeOptionalProperty("FILTER");
+        if (filterString != null) {
+            context.setFilterString(filterString);
+            context.setFilterStringValid(true);
+
+            // Parse filterString and add attrs to attrsProjected set
+            // TODO: we need to add attrNum to the attrsProjected set
+        }
+
         /* Process column projection info */
         String columnProjStr = params.removeOptionalProperty("ATTRS-PROJ");
-        List<Integer> columnProjList = new ArrayList<>();
         if (columnProjStr != null) {
-            int columnProj = Integer.parseInt(columnProjStr);
-            context.setNumAttrsProjected(columnProj);
-            if (columnProj > 0) {
-                String columnProjIndexStr = params.removeProperty("ATTRS-PROJ-IDX");
-                String columnProjIdx[] = columnProjIndexStr.split(",");
-                for (int i = 0; i < columnProj; i++) {
-                    columnProjList.add(Integer.valueOf(columnProjIdx[i]));
+            int numberOfProjectedColumns = Integer.parseInt(columnProjStr);
+            context.setNumAttrsProjected(numberOfProjectedColumns);
+            if (numberOfProjectedColumns > 0) {
+                String projectionIndices[] = params.removeProperty("ATTRS-PROJ-IDX").split(",");
+                for (String s : projectionIndices) {
+                    attrsProjected.add(Integer.valueOf(s));
                 }
             } else {
                 /* This is a special case to handle aggregate queries not related to any specific column
                  * eg: count(*) queries. */
-                columnProjList.add(0);
+                attrsProjected.add(0);
             }
         }
 
         int columns = params.removeIntProperty("ATTRS");
-        for (int i = 0; i < columns; i++) {
-            String columnName = params.removeProperty("ATTR-NAME" + i);
-            int columnTypeCode = params.removeIntProperty("ATTR-TYPECODE" + i);
-            String columnTypeName = params.removeProperty("ATTR-TYPENAME" + i);
-            Integer[] columnTypeMods = parseTypeMods(params, i);
-            ColumnDescriptor column;
-            if (columnProjStr != null) {
-                column = new ColumnDescriptor(columnName, columnTypeCode, i, columnTypeName, columnTypeMods, columnProjList.contains(i));
-            } else {
-                /* For data formats that don't support column projection */
-                column = new ColumnDescriptor(columnName, columnTypeCode, i, columnTypeName, columnTypeMods);
-            }
+        for (int attrNumber = 0; attrNumber < columns; attrNumber++) {
+            String columnName = params.removeProperty("ATTR-NAME" + attrNumber);
+            int columnOID = params.removeIntProperty("ATTR-TYPECODE" + attrNumber);
+            String columnTypeName = params.removeProperty("ATTR-TYPENAME" + attrNumber);
+            Integer[] columnTypeMods = parseTypeMods(params, attrNumber);
+            // Project the column if columnProjStr is null
+            boolean isProjected = columnProjStr == null || attrsProjected.contains(attrNumber);
+            ColumnDescriptor column = new ColumnDescriptor(
+                    columnName,
+                    columnOID,
+                    attrNumber,
+                    columnTypeName,
+                    columnTypeMods,
+                    isProjected);
             context.getTupleDescription().add(column);
 
             if (columnName.equalsIgnoreCase(ColumnDescriptor.RECORD_KEY_NAME)) {

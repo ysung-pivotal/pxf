@@ -257,7 +257,6 @@ public abstract class PxfUnit {
 //
 ////		paramsMap.put("X-GP-ALIGNMENT", "what");
 ////		paramsMap.put("X-GP-SEGMENT-ID", "1");
-////		paramsMap.put("X-GP-HAS-FILTER", "0");
 ////		paramsMap.put("X-GP-SEGMENT-COUNT", "1");
 //
 ////		paramsMap.put("X-GP-FORMAT", "GPDBWritable");
