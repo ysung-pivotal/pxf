@@ -91,6 +91,7 @@ public class GPDBWritable implements Writable {
     private static final int PREV_VERSION = 1;
     private static final int VERSION = 2; /* for backward compatibility */
     private static final String CHARSET = "UTF-8";
+    private static final DBType[] DBTypeVals = DBType.values();
 
     /*
      * Local variables
@@ -208,32 +209,34 @@ public class GPDBWritable implements Writable {
         for (int i = 0; i < colCnt; i++) {
             int enumType = (in.readByte());
             curOffset += 1;
-            if (enumType == DBType.BIGINT.ordinal()) {
-                colType[i] = DataType.BIGINT.getOID();
-                coldbtype[i] = DBType.BIGINT;
-            } else if (enumType == DBType.BOOLEAN.ordinal()) {
-                colType[i] = DataType.BOOLEAN.getOID();
-                coldbtype[i] = DBType.BOOLEAN;
-            } else if (enumType == DBType.FLOAT8.ordinal()) {
-                colType[i] = DataType.FLOAT8.getOID();
-                coldbtype[i] = DBType.FLOAT8;
-            } else if (enumType == DBType.INTEGER.ordinal()) {
-                colType[i] = DataType.INTEGER.getOID();
-                coldbtype[i] = DBType.INTEGER;
-            } else if (enumType == DBType.REAL.ordinal()) {
-                colType[i] = DataType.REAL.getOID();
-                coldbtype[i] = DBType.REAL;
-            } else if (enumType == DBType.SMALLINT.ordinal()) {
-                colType[i] = DataType.SMALLINT.getOID();
-                coldbtype[i] = DBType.SMALLINT;
-            } else if (enumType == DBType.BYTEA.ordinal()) {
-                colType[i] = DataType.BYTEA.getOID();
-                coldbtype[i] = DBType.BYTEA;
-            } else if (enumType == DBType.TEXT.ordinal()) {
-                colType[i] = DataType.TEXT.getOID();
-                coldbtype[i] = DBType.TEXT;
-            } else {
-                throw new IOException("Unknown GPDBWritable.DBType ordinal value");
+            coldbtype[i] = DBTypeVals[enumType];
+            switch (DBTypeVals[enumType]) {
+                case BIGINT:
+                    colType[i] = DataType.BIGINT.getOID();
+                    break;
+                case BOOLEAN:
+                    colType[i] = DataType.BOOLEAN.getOID();
+                    break;
+                case FLOAT8:
+                    colType[i] = DataType.FLOAT8.getOID();
+                    break;
+                case INTEGER:
+                    colType[i] = DataType.INTEGER.getOID();
+                    break;
+                case REAL:
+                    colType[i] = DataType.REAL.getOID();
+                    break;
+                case SMALLINT:
+                    colType[i] = DataType.SMALLINT.getOID();
+                    break;
+                case BYTEA:
+                    colType[i] = DataType.BYTEA.getOID();
+                    break;
+                case TEXT:
+                    colType[i] = DataType.TEXT.getOID();
+                    break;
+                default:
+                        throw new IOException("Unknown GPDBWritable.DBType ordinal value");
             }
         }
 
@@ -267,47 +270,38 @@ public class GPDBWritable implements Writable {
                 }
 
                 switch (DataType.get(colType[i])) {
-                    case BIGINT: {
+                    case BIGINT:
                         colValue[i] = in.readLong();
                         break;
-                    }
-                    case BOOLEAN: {
+                    case BOOLEAN:
                         colValue[i] = in.readBoolean();
                         break;
-                    }
-                    case FLOAT8: {
+                    case FLOAT8:
                         colValue[i] = in.readDouble();
                         break;
-                    }
-                    case INTEGER: {
+                    case INTEGER:
                         colValue[i] = in.readInt();
                         break;
-                    }
-                    case REAL: {
+                    case REAL:
                         colValue[i] = in.readFloat();
                         break;
-                    }
-                    case SMALLINT: {
+                    case SMALLINT:
                         colValue[i] = in.readShort();
                         break;
-                    }
-
 					/* For BYTEA column, it has a 4 byte var length header. */
-                    case BYTEA: {
+                    case BYTEA:
                         colValue[i] = new byte[varcollen];
                         in.readFully((byte[]) colValue[i]);
                         break;
-                    }
                     /* For text formatted column, it has a 4 byte var length header
                      * and it's always null terminated string.
 					 * So, we can remove the last "\0" when constructing the string.
 					 */
-                    case TEXT: {
+                    case TEXT:
                         byte[] data = new byte[varcollen];
                         in.readFully(data, 0, varcollen);
                         colValue[i] = new String(data, 0, varcollen - 1, CHARSET);
                         break;
-                    }
 
                     default:
                         throw new IOException("Unknown GPDBWritable ColType");
@@ -349,7 +343,8 @@ public class GPDBWritable implements Writable {
         for (int i = 0; i < numCol; i++) {
             /* Get the enum type */
             DBType coldbtype;
-            switch (DataType.get(colType[i])) {
+            DataType type = DataType.get(colType[i]);
+            switch (type) {
                 case BIGINT:
                     coldbtype = DBType.BIGINT;
                     break;
@@ -390,7 +385,7 @@ public class GPDBWritable implements Writable {
 				 */
                 if (!coldbtype.isVarLength()) {
                     colLength[i] = coldbtype.getTypeLength();
-                } else if (!isTextForm(colType[i])) {
+                } else if (!DataType.isTextForm(type)) {
                     colLength[i] = ((byte[]) colValue[i]).length;
                 } else {
                     colLength[i] = ((String) colValue[i]).getBytes(CHARSET).length;
@@ -440,22 +435,22 @@ public class GPDBWritable implements Writable {
 				/* Now, write the actual column value */
                 switch (DataType.get(colType[i])) {
                     case BIGINT:
-                        out.writeLong(((Long) colValue[i]));
+                        out.writeLong((Long) colValue[i]);
                         break;
                     case BOOLEAN:
-                        out.writeBoolean(((Boolean) colValue[i]));
+                        out.writeBoolean((Boolean) colValue[i]);
                         break;
                     case FLOAT8:
-                        out.writeDouble(((Double) colValue[i]));
+                        out.writeDouble((Double) colValue[i]);
                         break;
                     case INTEGER:
-                        out.writeInt(((Integer) colValue[i]));
+                        out.writeInt((Integer) colValue[i]);
                         break;
                     case REAL:
-                        out.writeFloat(((Float) colValue[i]));
+                        out.writeFloat((Float) colValue[i]);
                         break;
                     case SMALLINT:
-                        out.writeShort(((Short) colValue[i]));
+                        out.writeShort((Short) colValue[i]);
                         break;
 
 					/* For BYTEA format, add 4byte length header at the beginning  */
@@ -810,14 +805,12 @@ public class GPDBWritable implements Writable {
             throw new TypeMismatchException("Column index is out of range");
         }
 
-        int exTyp = colType[idx];
-
-        if (isTextForm(exTyp)) {
+        if (DataType.isTextForm(inTyp)) {
             if (inTyp != DataType.TEXT) {
                 throw new TypeMismatchException(formErrorMsg(inTyp.getOID(), DataType.TEXT.getOID(), isSet));
             }
-        } else if (inTyp != DataType.get(exTyp)) {
-            throw new TypeMismatchException(formErrorMsg(inTyp.getOID(), exTyp, isSet));
+        } else if (inTyp != DataType.get(colType[idx])) {
+            throw new TypeMismatchException(formErrorMsg(inTyp.getOID(), colType[idx], isSet));
         }
     }
 
@@ -825,15 +818,6 @@ public class GPDBWritable implements Writable {
         return isSet
                 ? "Cannot set " + getTypeName(inTyp) + " to a " + getTypeName(colTyp) + " column"
                 : "Cannot get " + getTypeName(inTyp) + " from a " + getTypeName(colTyp) + " column";
-    }
-
-    /**
-     * Private Helper routine to tell whether a type is Text form or not
-     *
-     * @param type the type OID that we want to check
-     */
-    private boolean isTextForm(int type) {
-        return DataType.isTextForm(type);
     }
 
     /**

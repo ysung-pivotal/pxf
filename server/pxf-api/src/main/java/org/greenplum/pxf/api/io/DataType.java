@@ -22,23 +22,22 @@ package org.greenplum.pxf.api.io;
 
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Supported Data Types and OIDs (GPDB Data Type identifiers).
  * There's a one-to-one match between a Data Type and it's corresponding OID.
  */
 public enum DataType {
-    BOOLEAN(16),
-    BYTEA(17),
+
     BIGINT(20),
-    SMALLINT(21),
-    INTEGER(23),
-    TEXT(25),
-    REAL(700),
+    BOOLEAN(16),
     FLOAT8(701),
+    INTEGER(23),
+    REAL(700),
+    SMALLINT(21),
+    BYTEA(17),
+    TEXT(25),
     /**
      * char(length), blank-padded string, fixed storage length
      */
@@ -61,7 +60,8 @@ public enum DataType {
     UNSUPPORTED_TYPE(-1);
 
     private static final Map<Integer, DataType> lookup = new HashMap<>();
-    private static final Set<Integer> notText = new HashSet<>();
+    private static final EnumSet<DataType> notText =
+            EnumSet.of(BIGINT, BOOLEAN, BYTEA, FLOAT8, INTEGER, REAL, SMALLINT);
 
     static {
 
@@ -70,14 +70,6 @@ public enum DataType {
         INT8ARRAY.typeElem = BIGINT;
         BOOLARRAY.typeElem = BOOLEAN;
         TEXTARRAY.typeElem = TEXT;
-
-        notText.add(BIGINT.OID);
-        notText.add(BOOLEAN.OID);
-        notText.add(BYTEA.OID);
-        notText.add(FLOAT8.OID);
-        notText.add(INTEGER.OID);
-        notText.add(REAL.OID);
-        notText.add(SMALLINT.OID);
 
         for (DataType dt : EnumSet.allOf(DataType.class)) {
             lookup.put(dt.getOID(), dt);
@@ -102,13 +94,12 @@ public enum DataType {
         return type == null ? UNSUPPORTED_TYPE : type;
     }
 
-    public static boolean isArrayType(int OID) {
-        DataType type = lookup.get(OID);
+    public static boolean isArrayType(DataType type) {
         return type != null && type.typeElem != null;
     }
 
-    public static boolean isTextForm(int OID) {
-        return !notText.contains(OID);
+    public static boolean isTextForm(DataType type) {
+        return !notText.contains(type);
     }
 
     public int getOID() {
