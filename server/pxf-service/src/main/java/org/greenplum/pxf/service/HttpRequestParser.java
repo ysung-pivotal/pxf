@@ -1,6 +1,7 @@
 package org.greenplum.pxf.service;
 
 import org.apache.commons.lang.StringUtils;
+import org.greenplum.pxf.api.FilterParser;
 import org.greenplum.pxf.api.model.OutputFormat;
 import org.greenplum.pxf.api.model.PluginConf;
 import org.greenplum.pxf.api.model.RequestContext;
@@ -92,8 +93,8 @@ public class HttpRequestParser implements RequestParser<HttpHeaders> {
 
         context.setDataSource(params.removeProperty("DATA-DIR"));
 
-        // result.setFilterString(); taken care by parseFilterProjectionInformationAndTupleDescription()
-        // result.setFilterStringValid(); taken care by parseFilterProjectionInformationAndTupleDescription()
+        // result.setFilterString(); taken care by parseFilterAndProjectionInformationAndTupleDescription()
+        // result.setFilterStringValid(); taken care by parseFilterAndProjectionInformationAndTupleDescription()
 
         context.setFragmenter(params.removeUserProperty("FRAGMENTER"));
 
@@ -134,8 +135,8 @@ public class HttpRequestParser implements RequestParser<HttpHeaders> {
         context.setTransactionId(params.removeProperty("XID"));
 
         // parse tuple description
-        parseFilterProjectionInformationAndTupleDescription(params, context);
-        // result.setTupleDescription(); taken care by parseFilterProjectionInformationAndTupleDescription()
+        parseFilterAndProjectionInformationAndTupleDescription(params, context);
+        // result.setTupleDescription(); taken care by parseFilterAndProjectionInformationAndTupleDescription()
 
         context.setUser(params.removeProperty("USER"));
 
@@ -248,7 +249,7 @@ public class HttpRequestParser implements RequestParser<HttpHeaders> {
      * Sets the tuple description for the record
      * Attribute Projection information is optional
      */
-    private void parseFilterProjectionInformationAndTupleDescription(RequestMap params, RequestContext context) {
+    private void parseFilterAndProjectionInformationAndTupleDescription(RequestMap params, RequestContext context) {
         Set<Integer> attrsProjected = new HashSet<>();
 
         String filterString = params.removeOptionalProperty("FILTER");
@@ -257,7 +258,45 @@ public class HttpRequestParser implements RequestParser<HttpHeaders> {
             context.setFilterStringValid(true);
 
             // Parse filterString and add attrs to attrsProjected set
-            // TODO: we need to add attrNum to the attrsProjected set
+            FilterParser parser = new FilterParser(new FilterParser.FilterBuilder() {
+                @Override
+                public Object build(FilterParser.Operation operation, Object left, Object right) {
+                    addAttributes(left);
+                    addAttributes(right);
+                    return null;
+                }
+
+                @Override
+                public Object build(FilterParser.Operation operation, Object operand) {
+                    addAttributes(operand);
+                    return null;
+                }
+
+                @Override
+                public Object build(FilterParser.LogicalOperation operation, Object left, Object right) {
+                    addAttributes(left);
+                    addAttributes(right);
+                    return null;
+                }
+
+                @Override
+                public Object build(FilterParser.LogicalOperation operation, Object filter) {
+                    addAttributes(filter);
+                    return null;
+                }
+
+                void addAttributes(Object operand) {
+                    if (operand instanceof FilterParser.ColumnIndex) {
+                        attrsProjected.add(((FilterParser.ColumnIndex) operand).index());
+                    }
+                }
+            });
+
+            try {
+                parser.parse(filterString.getBytes(FilterParser.DEFAULT_CHARSET));
+            } catch (Exception e) {
+                LOG.error(String.format("Unable to parse filter string %s", filterString), e);
+            }
         }
 
         /* Process column projection info */
