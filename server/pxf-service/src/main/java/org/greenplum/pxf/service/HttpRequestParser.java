@@ -250,53 +250,16 @@ public class HttpRequestParser implements RequestParser<HttpHeaders> {
      * Attribute Projection information is optional
      */
     private void parseFilterAndProjectionInformationAndTupleDescription(RequestMap params, RequestContext context) {
-        Set<Integer> attrsProjected = new HashSet<>();
+        Set<Integer> attrsProjected;
 
         String filterString = params.removeOptionalProperty("FILTER");
         if (filterString != null) {
             context.setFilterString(filterString);
             context.setFilterStringValid(true);
 
-            // Parse filterString and add attrs to attrsProjected set
-            FilterParser parser = new FilterParser(new FilterParser.FilterBuilder() {
-                @Override
-                public Object build(FilterParser.Operation operation, Object left, Object right) {
-                    addAttributes(left);
-                    addAttributes(right);
-                    return null;
-                }
-
-                @Override
-                public Object build(FilterParser.Operation operation, Object operand) {
-                    addAttributes(operand);
-                    return null;
-                }
-
-                @Override
-                public Object build(FilterParser.LogicalOperation operation, Object left, Object right) {
-                    addAttributes(left);
-                    addAttributes(right);
-                    return null;
-                }
-
-                @Override
-                public Object build(FilterParser.LogicalOperation operation, Object filter) {
-                    addAttributes(filter);
-                    return null;
-                }
-
-                void addAttributes(Object operand) {
-                    if (operand instanceof FilterParser.ColumnIndex) {
-                        attrsProjected.add(((FilterParser.ColumnIndex) operand).index());
-                    }
-                }
-            });
-
-            try {
-                parser.parse(filterString.getBytes(FilterParser.DEFAULT_CHARSET));
-            } catch (Exception e) {
-                LOG.error(String.format("Unable to parse filter string %s", filterString), e);
-            }
+            attrsProjected = extractProjectedAttrsFromFilter(filterString);
+        } else {
+            attrsProjected = new HashSet<>();
         }
 
         /* Process column projection info */
@@ -337,6 +300,59 @@ public class HttpRequestParser implements RequestParser<HttpHeaders> {
                 context.setRecordkeyColumn(column);
             }
         }
+    }
+
+
+    /**
+     * Returns a set of attribute indexes from the filter string
+     *
+     * @param filterString the filter string
+     * @return a set of distinct attribute indexes
+     */
+    private Set<Integer> extractProjectedAttrsFromFilter(String filterString) {
+        final Set<Integer> attrsProjected = new HashSet<>();
+        // Parse filterString and add attrs to attrsProjected set
+        FilterParser parser = new FilterParser(new FilterParser.FilterBuilder() {
+            @Override
+            public Object build(FilterParser.Operation operation, Object left, Object right) {
+                addAttributes(left);
+                addAttributes(right);
+                return null;
+            }
+
+            @Override
+            public Object build(FilterParser.Operation operation, Object operand) {
+                addAttributes(operand);
+                return null;
+            }
+
+            @Override
+            public Object build(FilterParser.LogicalOperation operation, Object left, Object right) {
+                addAttributes(left);
+                addAttributes(right);
+                return null;
+            }
+
+            @Override
+            public Object build(FilterParser.LogicalOperation operation, Object filter) {
+                addAttributes(filter);
+                return null;
+            }
+
+            private void addAttributes(Object operand) {
+                if (operand instanceof FilterParser.ColumnIndex) {
+                    attrsProjected.add(((FilterParser.ColumnIndex) operand).index());
+                }
+            }
+        });
+
+        try {
+            parser.parse(filterString.getBytes(FilterParser.DEFAULT_CHARSET));
+        } catch (Exception e) {
+            LOG.error(String.format("Unable to parse filter string %s", filterString), e);
+        }
+
+        return attrsProjected;
     }
 
     private Integer[] parseTypeMods(RequestMap params, int columnIndex) {
